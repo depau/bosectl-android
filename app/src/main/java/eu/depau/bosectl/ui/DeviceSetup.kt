@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Bluetooth
-import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -82,8 +79,8 @@ fun DeviceSetupScreen(onDeviceSelected: (String) -> Unit) {
                     supportingContent = { Text(device.address) },
                     leadingContent = {
                         Icon(
-                            if (isAudio(device)) Icons.Outlined.Headphones
-                            else Icons.Outlined.Bluetooth,
+                            if (isAudio(device)) AppIcons.Headphones
+                            else AppIcons.Bluetooth,
                             contentDescription = null,
                             modifier = Modifier.size(28.dp),
                             tint = if (isAudio(device)) MaterialTheme.colorScheme.primary

@@ -72,6 +72,15 @@ Run the protocol test suite (pure JVM, no device needed):
 ./gradlew :bmap:test
 ```
 
+Icons are Material Symbols, vendored as vector drawables in `res/drawable`
+(there is no Compose artifact for Symbols, and the older `material-icons-extended`
+lacks glyphs like `noise_control_on` and the per-side earbud icons). To add one,
+append it to the list in `tools/fetch-material-symbols.py` and run:
+
+```bash
+python3 tools/fetch-material-symbols.py
+```
+
 ## Project layout
 
 ```
@@ -79,6 +88,7 @@ bmap/     BMAP protocol: packet codec, parsers, RFCOMM transport, typed API.
           Pure Kotlin, no UI dependencies, unit-tested against real captures.
 app/      Compose UI, device repository, connection lifecycle, Glance widget.
 docs/     PROTOCOL.md — everything learned about the wire format.
+tools/    fetch-material-symbols.py — regenerates the vendored icon drawables.
 ```
 
 `:bmap` knows nothing about Android UI and `:app` never builds a packet by hand,

@@ -15,9 +15,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Hearing
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -94,7 +91,7 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
             if (!editable) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Outlined.Lock, contentDescription = null,
+                        AppIcons.Lock, contentDescription = null,
                         Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -149,7 +146,7 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Hearing, contentDescription = null, Modifier.size(20.dp))
+                Icon(AppIcons.Hearing, contentDescription = null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Noise cancellation", Modifier.weight(1f))
                 Text(

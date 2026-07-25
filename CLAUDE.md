@@ -71,6 +71,19 @@ capture; if you need a new one, probe for it and record the finding in
 Writes use SETGET or START only — never SET (auth-gated). Preset modes 0-3 reject
 `[31.6]` writes with Runtime error 8.
 
+## Icons
+
+Material Symbols, vendored as vector drawables and exposed through `AppIcons`
+(`ui/AppIcons.kt`) and `ModeIcons.kt`. **Do not add `material-icons-extended`
+back** — it is Google's frozen predecessor set, it lacks glyphs this app needs
+(`noise_control_on`, `earbud_left/right/case`), and it was most of a 63 MB debug
+APK (now 31 MB).
+
+New icon: add its Symbols name to `tools/fetch-material-symbols.py`, run the
+script, then expose it in `AppIcons`. The script converts the Symbols
+`viewBox="0 -960 960 960"` into an Android-legal viewport via a translate group.
+Never hand-write path data.
+
 ## Testing
 
 `bmap/src/test/.../ParsersTest.kt` asserts against **real capture hex**, with the

@@ -10,13 +10,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,7 +50,7 @@ fun ProfilesScreen(onBack: () -> Unit) {
                 title = { Text("Modes") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                        Icon(AppIcons.ArrowBack, contentDescription = "Back")
                     }
                 },
             )
@@ -66,7 +59,7 @@ fun ProfilesScreen(onBack: () -> Unit) {
             if (freeSlot != null && state.connected) {
                 ExtendedFloatingActionButton(
                     onClick = { editorTarget = EditorTarget(null, freeSlot) },
-                    icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                    icon = { Icon(AppIcons.Add, contentDescription = null) },
                     text = { Text("New mode") },
                 )
             }
@@ -136,31 +129,40 @@ private fun ModeListCard(
             )
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
-                Text(mode.name, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    mode.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    // On the tinted active card, "primary" barely separates from
+                    // the container; use the matching on-container colour.
+                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurface,
+                )
                 if (active) {
                     Text(
                         "Active",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
             }
             if (active) {
                 IconButton(onClick = onOpenSheet) {
                     Icon(
-                        if (mode.editable) Icons.Outlined.Edit else Icons.Outlined.Visibility,
+                        if (mode.editable) AppIcons.Edit else AppIcons.Visibility,
                         contentDescription = if (mode.editable) "Edit" else "View",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
             }
             IconButton(onClick = onToggleStar, enabled = enabled) {
                 if (starred) {
                     Icon(
-                        Icons.Filled.Star, contentDescription = "Unstar",
-                        tint = MaterialTheme.colorScheme.primary,
+                        AppIcons.StarFilled, contentDescription = "Unstar",
+                        tint = if (active) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.primary,
                     )
                 } else {
-                    Icon(Icons.Outlined.StarBorder, contentDescription = "Star")
+                    Icon(AppIcons.Star, contentDescription = "Star")
                 }
             }
         }

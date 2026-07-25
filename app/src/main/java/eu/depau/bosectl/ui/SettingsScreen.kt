@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -123,7 +120,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                        Icon(AppIcons.ArrowBack, contentDescription = "Back")
                     }
                 },
             )
@@ -368,7 +365,7 @@ private fun VolumeItem() {
     }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.AutoMirrored.Outlined.VolumeUp, contentDescription = null)
+            Icon(AppIcons.VolumeUp, contentDescription = null)
             Text("Volume", Modifier.padding(start = 16.dp).weight(1f))
             Text(
                 "$volume/$maxVolume",

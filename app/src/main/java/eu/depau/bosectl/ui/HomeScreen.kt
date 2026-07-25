@@ -14,16 +14,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.BatteryStd
-import androidx.compose.material.icons.outlined.BluetoothDisabled
-import androidx.compose.material.icons.outlined.Hearing
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.WorkOutline
-import androidx.compose.material.icons.outlined.SpatialAudio
-import androidx.compose.material.icons.outlined.SpatialAudioOff
-import androidx.compose.material.icons.outlined.SpatialTracking
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -51,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -77,7 +66,7 @@ fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
                 title = { Text(state.deviceName ?: "Bose Control") },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        Icon(AppIcons.Settings, contentDescription = "Settings")
                     }
                 },
             )
@@ -123,7 +112,7 @@ fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
             TextButton(onClick = onOpenProfiles, modifier = Modifier.align(Alignment.End)) {
                 Text("All modes")
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null,
+                Icon(AppIcons.ArrowForward, contentDescription = null,
                     modifier = Modifier.size(18.dp))
             }
 
@@ -138,11 +127,20 @@ fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            SectionLabel("Noise cancelling")
             if (state.audioSettings == null && loading) {
                 NoiseControlsSkeleton()
             } else {
                 NoiseControls(state)
+            }
+
+            state.touchControls?.let { touchOn ->
+                SectionLabel("Controls")
+                SwitchRow(
+                    icon = AppIcons.TouchApp, label = "Touch controls",
+                    checked = touchOn, enabled = state.connected,
+                    supporting = "Tap and swipe gestures on the earbuds",
+                ) { deviceAction { DeviceRepository.setTouchControls(it) } }
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -194,7 +192,7 @@ private fun DisconnectedCard(busy: Boolean, error: String?, onRetry: () -> Unit)
                 CircularProgressIndicator(Modifier.size(32.dp))
                 Text("Connecting…")
             } else {
-                Icon(Icons.Outlined.BluetoothDisabled, contentDescription = null)
+                Icon(AppIcons.BluetoothDisabled, contentDescription = null)
                 Text("Not connected", style = MaterialTheme.typography.titleMedium)
                 error?.let {
                     Text(
@@ -217,15 +215,11 @@ private fun BatteryRow(state: eu.depau.bosectl.data.BoseState) {
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         val cells = listOfNotNull(
-            battery.left?.let { BatteryCell(Icons.Outlined.Hearing, "L", it) },
-            // Same ear glyph flipped, so left and right read as a pair
-            battery.right?.let { BatteryCell(Icons.Outlined.Hearing, "R", it, mirrored = true) },
-            // Briefcase outline doubles nicely as a charging case.
-            // WorkOutline, not Work: the latter renders solid even in the
-            // Outlined theme.
-            battery.case?.let { BatteryCell(Icons.Outlined.WorkOutline, "Case", it) },
+            battery.left?.let { BatteryCell(AppIcons.EarbudLeft, "L", it) },
+            battery.right?.let { BatteryCell(AppIcons.EarbudRight, "R", it) },
+            battery.case?.let { BatteryCell(AppIcons.EarbudCase, "Case", it) },
         ).ifEmpty {
-            listOfNotNull(battery.overall?.let { BatteryCell(Icons.Outlined.BatteryStd, "", it) })
+            listOfNotNull(battery.overall?.let { BatteryCell(AppIcons.BatteryStd, "", it) })
         }
         for (cell in cells) {
             AssistChip(
@@ -236,9 +230,7 @@ private fun BatteryRow(state: eu.depau.bosectl.data.BoseState) {
                 leadingIcon = {
                     Icon(
                         cell.icon, contentDescription = null,
-                        Modifier
-                            .size(18.dp)
-                            .then(if (cell.mirrored) Modifier.scale(-1f, 1f) else Modifier),
+                        Modifier.size(18.dp),
                     )
                 },
             )
@@ -250,7 +242,6 @@ private data class BatteryCell(
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val label: String,
     val value: Int,
-    val mirrored: Boolean = false,
 )
 
 @Composable
@@ -338,9 +329,9 @@ fun ImmersiveAudioSelector(
     onSelect: (Spatial) -> Unit,
 ) {
     val options = listOf(
-        Triple(Spatial.OFF, "Off", Icons.Outlined.SpatialAudioOff),
-        Triple(Spatial.STILL, "Still", Icons.Outlined.SpatialAudio),
-        Triple(Spatial.MOTION, "Motion", Icons.Outlined.SpatialTracking),
+        Triple(Spatial.OFF, "Off", AppIcons.SpatialAudioOff),
+        Triple(Spatial.STILL, "Still", AppIcons.SpatialTracking),
+        Triple(Spatial.MOTION, "Motion", AppIcons.SpatialAudio),
     )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, (value, label, icon) ->
@@ -369,33 +360,64 @@ private fun NoiseControls(state: eu.depau.bosectl.data.BoseState) {
     var sliderPos by remember(settings.cncLevel) {
         mutableFloatStateOf((10 - settings.cncLevel).toFloat())
     }
-    var dragging by remember { mutableStateOf(false) }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.Hearing, contentDescription = null, Modifier.size(20.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Noise cancellation", Modifier.weight(1f))
+    SwitchRow(
+        icon = if (settings.ancToggle) AppIcons.NoiseControlOn
+        else AppIcons.NoiseControlOff,
+        label = "Noise cancelling",
+        checked = settings.ancToggle, enabled = state.connected,
+    ) { deviceAction { DeviceRepository.setAnc(it) } }
+
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            "${sliderPos.toInt()}/10",
+            "Level",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (settings.ancToggle) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            cncLevelName(sliderPos.toInt()),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     Slider(
         value = sliderPos,
-        onValueChange = { sliderPos = it; dragging = true },
+        onValueChange = { sliderPos = it },
         onValueChangeFinished = {
-            dragging = false
             deviceAction { DeviceRepository.setCnc(10 - sliderPos.toInt()) }
         },
         valueRange = 0f..10f,
         steps = 9,
         enabled = state.connected && settings.ancToggle,
     )
-    SwitchRow(
-        icon = Icons.Outlined.Hearing, label = "Noise cancelling (ANC)",
-        checked = settings.ancToggle, enabled = state.connected,
-    ) { deviceAction { DeviceRepository.setAnc(it) } }
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            "Hear surroundings",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            "Block noise",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Slider position (10 = most cancelling) as words, not a bare number. */
+private fun cncLevelName(displayLevel: Int) = when (displayLevel) {
+    0 -> "Full transparency"
+    in 1..2 -> "Very low"
+    in 3..4 -> "Low"
+    in 5..6 -> "Medium"
+    in 7..8 -> "High"
+    else -> "Maximum"
 }
 
 @Composable

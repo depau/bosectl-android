@@ -44,6 +44,7 @@ data class BoseState(
     val currentModeIdx: Int? = null,
     val favorites: Favorites? = null,
     val audioSettings: AudioSettings? = null,
+    val touchControls: Boolean? = null,
     val lastError: String? = null,
 ) {
     val starredModes: List<ModeConfig>
@@ -177,6 +178,7 @@ object DeviceRepository {
         try {
             val snapshot = conn.snapshot()
             val battery = runCatching { conn.battery() }.getOrNull()
+            val touch = runCatching { conn.touchControls() }.getOrNull()
             val name = runCatching { conn.productName() }.getOrNull()
             val firmware = _state.value.firmware
                 ?: runCatching { conn.firmware() }.getOrNull()
@@ -189,6 +191,7 @@ object DeviceRepository {
                 currentModeIdx = snapshot.currentModeIdx,
                 favorites = snapshot.favorites,
                 audioSettings = snapshot.audioSettings,
+                touchControls = touch ?: _state.value.touchControls,
                 lastError = null,
             )
         } catch (e: Exception) {
@@ -271,6 +274,11 @@ object DeviceRepository {
             conn.setAudioSettings(updated)
             _state.value = _state.value.copy(audioSettings = updated.copy(autoCnc = false))
         }
+
+    suspend fun setTouchControls(enabled: Boolean) = action { conn ->
+        conn.setTouchControls(enabled)
+        _state.value = _state.value.copy(touchControls = enabled)
+    }
 
     suspend fun toggleStar(modeIdx: Int) = action { conn ->
         val favorites = _state.value.favorites ?: conn.favorites()
