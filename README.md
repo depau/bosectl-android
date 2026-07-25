@@ -24,8 +24,16 @@ which modes are reachable by earbud gesture. Create, edit and delete custom
 profiles (name, icon, voice prompt, noise cancellation, immersive audio).
 Presets open read-only so you can inspect what they do.
 
-**Home-screen widget** — starred modes and head tracking, without opening the
-app. It renders from a cache, so it draws instantly and still works while
+**Home-screen widget** — controls without opening the app, with a layout that
+adapts to the size you give it (minimum 3x1):
+
+| Height | Shows |
+|---|---|
+| 1 row | Header and starred modes as chips (with icons when wider than 3 cells) |
+| 2 rows | Header, square mode buttons, head tracking |
+| 3 rows | Adds ANC and touch-control toggles, plus a noise-cancelling stepper |
+
+It renders from a cache, so it draws instantly and still works while
 disconnected; tapping a control then connects on demand.
 
 **Settings** — volume, equalizer, side tone, voice prompts, in-ear detection

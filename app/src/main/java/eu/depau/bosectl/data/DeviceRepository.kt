@@ -263,6 +263,14 @@ object DeviceRepository {
 
     suspend fun setAnc(enabled: Boolean) = updateAudioSettings { it.copy(ancToggle = enabled) }
 
+    /**
+     * Nudge the noise-cancelling level by [delta] steps on the *display* scale
+     * (positive = more cancelling). The wire scale is inverted.
+     */
+    suspend fun adjustCnc(delta: Int) = updateAudioSettings {
+        it.copy(cncLevel = (it.cncLevel - delta).coerceIn(0, 10))
+    }
+
     // No setWind: [31.10] rejects wind-block writes with Runtime error 8 on the
     // QC Ultra Earbuds; wind block is only configurable per-profile via [31.6].
 
@@ -316,13 +324,18 @@ object DeviceRepository {
             prefs[Prefs.CACHE_CONNECTED] = s.connected
             s.deviceName?.let { prefs[Prefs.CACHE_DEVICE_NAME] = it }
             s.currentModeIdx?.let { prefs[Prefs.CACHE_CURRENT_MODE] = it }
-            s.audioSettings?.let { prefs[Prefs.CACHE_SPATIAL] = it.spatial.value }
+            s.audioSettings?.let {
+                prefs[Prefs.CACHE_SPATIAL] = it.spatial.value
+                prefs[Prefs.CACHE_ANC] = it.ancToggle
+                prefs[Prefs.CACHE_CNC] = it.cncLevel
+            }
+            s.touchControls?.let { prefs[Prefs.CACHE_TOUCH] = it }
             s.battery?.let { b ->
-                prefs[Prefs.CACHE_BATTERY] = listOfNotNull(
-                    b.left?.let { "L $it%" },
-                    b.right?.let { "R $it%" },
-                    b.case?.let { "☐ $it%" },
-                ).ifEmpty { listOfNotNull(b.overall?.let { "$it%" }) }.joinToString("  ")
+                // Stored per cell so the widget can pair each with its icon.
+                b.left?.let { prefs[Prefs.CACHE_BAT_LEFT] = it }
+                b.right?.let { prefs[Prefs.CACHE_BAT_RIGHT] = it }
+                b.case?.let { prefs[Prefs.CACHE_BAT_CASE] = it }
+                b.overall?.let { prefs[Prefs.CACHE_BAT_OVERALL] = it }
             }
             if (s.modes.isNotEmpty()) {
                 prefs[Prefs.CACHE_STARRED] = encodeCachedModes(

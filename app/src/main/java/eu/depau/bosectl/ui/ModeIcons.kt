@@ -10,7 +10,7 @@ import eu.depau.bosectl.bmap.Prompt
  * Icon for each voice-prompt id — the same association the official app uses
  * (the prompt enum doubles as the mode icon selector).
  */
-private val Prompt.drawable: Int
+val Prompt.drawable: Int
     get() = when (this) {
         Prompt.NONE -> R.drawable.ic_tune
         Prompt.QUIET -> R.drawable.ic_noise_control_on
@@ -45,13 +45,15 @@ private val Prompt.drawable: Int
         Prompt.CINEMA -> R.drawable.ic_movie
     }
 
+/** Drawable id for a prompt, usable outside Compose (the Glance widget). */
+fun promptDrawable(promptId: Int): Int =
+    Prompt.fromId(promptId)?.drawable ?: R.drawable.ic_surround_sound
+
 val Prompt.icon: ImageVector
     @Composable get() = ImageVector.vectorResource(drawable)
 
 @Composable
-fun promptIcon(promptId: Int): ImageVector = ImageVector.vectorResource(
-    Prompt.fromId(promptId)?.drawable ?: R.drawable.ic_surround_sound
-)
+fun promptIcon(promptId: Int): ImageVector = ImageVector.vectorResource(promptDrawable(promptId))
 
 /** Human-readable label for the icon picker. */
 val Prompt.label: String

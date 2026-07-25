@@ -18,8 +18,14 @@ object Prefs {
     val CACHE_CONNECTED = booleanPreferencesKey("cache_connected")
     val CACHE_CURRENT_MODE = intPreferencesKey("cache_current_mode")
     val CACHE_SPATIAL = intPreferencesKey("cache_spatial")
-    val CACHE_BATTERY = stringPreferencesKey("cache_battery")
+    val CACHE_BAT_LEFT = intPreferencesKey("cache_bat_left")
+    val CACHE_BAT_RIGHT = intPreferencesKey("cache_bat_right")
+    val CACHE_BAT_CASE = intPreferencesKey("cache_bat_case")
+    val CACHE_BAT_OVERALL = intPreferencesKey("cache_bat_overall")
     val CACHE_STARRED = stringPreferencesKey("cache_starred")
+    val CACHE_ANC = booleanPreferencesKey("cache_anc")
+    val CACHE_CNC = intPreferencesKey("cache_cnc")
+    val CACHE_TOUCH = booleanPreferencesKey("cache_touch")
 }
 
 /** A starred mode as cached for the widget. */
