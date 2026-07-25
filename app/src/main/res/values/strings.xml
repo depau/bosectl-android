@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Bose Control</string>
+    <string name="widget_description">Switch mode and head tracking on your Bose headphones</string>
+</resources>
