@@ -54,6 +54,38 @@ different dialect of the same protocol and are not implemented.
 Developed and tested against QC Ultra Earbuds 2nd gen on firmware
 `8.4.8+gbb2cb60`.
 
+## Keep the official app installed
+
+This app replaces the official one for day-to-day control. It does **not** do
+firmware updates, and you want those.
+
+Bluetooth audio SoCs have a poor security record. In June 2025 ERNW disclosed
+three flaws (`CVE-2025-20700`, `CVE-2025-20701`, `CVE-2025-20702`) in Airoha
+SoCs used across Sony, Bose, JBL, Marshall, Beyerdynamic and others: Airoha's
+RACE debug protocol was reachable over BLE GATT and Bluetooth Classic with no
+pairing or authentication, giving anyone in radio range read/write access to the
+chip's RAM and flash — enough to extract the Bluetooth link key, impersonate the
+headset to the paired phone, issue Hands-Free Profile commands and listen
+through the phone's microphone, or rewrite the firmware outright
+([advisory](https://insinuator.net/2025/06/airoha-bluetooth-security-vulnerabilities/),
+[coverage](https://www.darkreading.com/vulnerabilities-threats/airoha-chip-vulns-sony-bose-earbuds-headphones)).
+Full details and a working exploit tool followed in December 2025, at which
+point a good share of the ~30 affected products were still unpatched
+([full disclosure](https://insinuator.net/2025/12/bluetooth-headphone-jacking-full-disclosure-of-airoha-race-vulnerabilities/)).
+ERNW's device list named the QuietComfort Earbuds and was explicitly not
+exhaustive; whether any given bug reaches your specific model is beside the
+point.
+
+Fixes arrive only as firmware, and firmware reaches the buds only through the
+Bose app or the [desktop updater](https://btu.bose.com/) (the charging case can
+only be updated over USB from the latter). Uninstalling the official app means
+silently never patching again — keep it around, even if you never open it for
+anything else.
+
+Worth noting where this app sits in that picture: BMAP itself accepts
+unauthenticated writes over RFCOMM from any paired device, which is exactly what
+makes Bose Control possible.
+
 ## Building
 
 ```bash
