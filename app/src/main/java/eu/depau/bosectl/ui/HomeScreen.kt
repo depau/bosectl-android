@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import eu.depau.bosectl.bmap.ModeConfig
+import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.bmap.Spatial
 import eu.depau.bosectl.data.DeviceRepository
 
@@ -54,6 +56,29 @@ fun deviceAction(block: suspend () -> Unit) = DeviceRepository.runAsync(block)
 @Composable
 fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
+    var disconnectTarget by remember { mutableStateOf<PairedDevice?>(null) }
+
+    disconnectTarget?.let { device ->
+        AlertDialog(
+            onDismissRequest = { disconnectTarget = null },
+            title = { Text("Disconnect this device?") },
+            text = {
+                Text(
+                    "Bose Control is running on ${device.name.ifEmpty { device.mac }}. " +
+                            "Disconnecting it also closes the app's connection to the earbuds."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    disconnectTarget = null
+                    deviceAction { DeviceRepository.disconnectSource(device.mac) }
+                }) { Text("Disconnect") }
+            },
+            dismissButton = {
+                TextButton(onClick = { disconnectTarget = null }) { Text("Cancel") }
+            },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -92,6 +117,37 @@ fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
             val loading = state.modes.isEmpty() && (state.busy || state.connected)
 
             if (state.battery == null && loading) BatterySkeleton() else BatteryRow(state)
+
+            // Device-only, like the rows in Settings: hidden while disconnected
+            // rather than shown empty, since we have no idea what's attached.
+            if (state.connected) {
+                SectionLabel("Connected to")
+                if (state.pairedDevices.isEmpty() && loading) {
+                    ConnectedDeviceSkeleton()
+                } else {
+                    state.connectedDevices.forEach { device ->
+                        ConnectedDeviceRow(
+                            device = device,
+                            playing = device.mac == state.activeSourceMac,
+                            // Dropping the phone this app runs on also drops
+                            // our own BMAP link, so that one asks first. Every
+                            // other disconnect is the common case and stays a
+                            // single tap.
+                            onDisconnect = {
+                                if (device.isLocalDevice) disconnectTarget = device
+                                else deviceAction { DeviceRepository.disconnectSource(device.mac) }
+                            },
+                        )
+                    }
+                    if (state.connectedDevices.isEmpty()) {
+                        Text(
+                            "No devices connected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
 
             SectionLabel("Mode")
             if (loading) {
@@ -418,6 +474,63 @@ private fun cncLevelName(displayLevel: Int) = when (displayLevel) {
     in 5..6 -> "Medium"
     in 7..8 -> "High"
     else -> "Maximum"
+}
+
+/**
+ * One connected source. [4.4] gives no name for a device we've never read
+ * [4.5] for, so the MAC stands in until that lands.
+ *
+ * "this device" and "playing" are different facts and both are worth showing:
+ * the first is the phone running the app, the second is whichever device
+ * currently holds audio — often not the same one.
+ */
+@Composable
+private fun ConnectedDeviceRow(
+    device: PairedDevice,
+    playing: Boolean,
+    onDisconnect: () -> Unit,
+) {
+    val tags = listOfNotNull(
+        "this device".takeIf { device.isLocalDevice },
+        "playing".takeIf { playing },
+    )
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(AppIcons.Bluetooth, contentDescription = null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(device.name.ifEmpty { device.mac }, maxLines = 1)
+            if (tags.isNotEmpty()) {
+                Text(
+                    tags.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        IconButton(onClick = onDisconnect) {
+            Icon(
+                AppIcons.BluetoothDisabled,
+                contentDescription = "Disconnect ${device.name.ifEmpty { device.mac }}",
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectedDeviceSkeleton() {
+    repeat(2) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconSkeleton(20.dp)
+            Spacer(Modifier.width(8.dp))
+            SkeletonBox(Modifier.width(140.dp).height(18.dp), cornerRadius = 4.dp)
+        }
+    }
 }
 
 @Composable
