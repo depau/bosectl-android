@@ -2,6 +2,7 @@ package eu.depau.bosectl.data
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.core.edit
@@ -183,11 +184,16 @@ object DeviceRepository {
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
             ?: return false
         val device = adapter.getRemoteDevice(mac)
-        // ponytail: hidden-but-ubiquitous BluetoothDevice.isConnected(); if the
-        // reflection ever gets blocked, fail open and let the connect attempt decide
+        // ponytail: hidden-but-ubiquitous BluetoothDevice.isConnected(). If the
+        // reflection ever gets blocked, fall back to "is any A2DP sink connected"
+        // — coarser, but connecting must never be something the app does on its
+        // own initiative, so guessing "yes" is the wrong default.
         return runCatching {
             device.javaClass.getMethod("isConnected").invoke(device) as Boolean
-        }.getOrDefault(true)
+        }.getOrElse {
+            adapter.getProfileConnectionState(BluetoothProfile.A2DP) ==
+                    BluetoothProfile.STATE_CONNECTED
+        }
     }
 
     /**

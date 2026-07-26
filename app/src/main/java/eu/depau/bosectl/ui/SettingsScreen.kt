@@ -74,7 +74,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
     var showRename by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
+    // Only read once a connection exists: opening Settings must never be what
+    // wakes the earbuds up. Re-runs when the user connects from the card below.
+    LaunchedEffect(state.connected) {
+        if (!state.connected) {
+            snapshot = null
+            loadError = null
+            return@LaunchedEffect
+        }
         runCatching {
             DeviceRepository.withDevice { conn ->
                 SettingsSnapshot(
@@ -111,7 +118,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
     // Layout is stable from first frame: titles render immediately, values show
     // skeletons until the device answers.
     val s = snapshot ?: SettingsSnapshot()
-    val loading = snapshot == null && loadError == null
+    val loading = state.connected && snapshot == null && loadError == null
     val loaded = snapshot != null && state.connected
 
     Scaffold(
@@ -139,125 +146,140 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
             }
 
             SectionHeader("Audio")
+            // Volume is the phone's media stream, so it works with the earbuds away.
             VolumeItem()
-            ListItem(
-                headlineContent = { Text("Equalizer") },
-                supportingContent = { Text("Bass, mid and treble") },
-                modifier = Modifier.clickableIf(state.connected, onOpenEq),
-            )
-            RadioPickerItem(
-                title = "Hear your own voice in calls",
-                subtitle = "Plays your voice back during calls: " +
-                        sidetoneLabels.getValue(s.sidetone),
-                enabled = loaded,
-                loading = loading,
-                options = sidetoneLabels.mapKeys { it.key.value },
-                selected = s.sidetone.value,
-            ) { value ->
-                val level = Sidetone.fromValue(value)
-                update { copy(sidetone = level) }
-                act { DeviceRepository.withDevice { it.setSidetone(level) } }
-            }
-            SwitchItem(
-                "Voice prompts",
-                // Don't show a default language before the device has answered.
-                if (loading) "Spoken announcements"
-                else "Spoken announcements (language: " +
-                        "${VOICE_LANGUAGES[s.promptsLanguage] ?: "unknown"})",
-                s.promptsEnabled, loaded, loading,
-            ) { v ->
-                update { copy(promptsEnabled = v) }
-                act { DeviceRepository.withDevice { it.setVoicePrompts(v, s.promptsLanguage) } }
-            }
 
-            SectionHeader("In-ear detection")
-            SwitchItem("Auto play/pause", "Pause when an earbud is removed",
-                s.autoPause, loaded, loading) { v ->
-                update { copy(autoPause = v) }
-                act { DeviceRepository.withDevice { it.setAutoPause(v) } }
-            }
-            SwitchItem("Auto-answer calls", "Answer by putting an earbud in",
-                s.autoAnswer, loaded, loading) { v ->
-                update { copy(autoAnswer = v) }
-                act { DeviceRepository.withDevice { it.setAutoAnswer(v) } }
-            }
-            SwitchItem(
-                "Auto transparency", "Let outside sound through while only one earbud is worn",
-                s.autoTransparency, loaded, loading,
-            ) { v ->
-                update { copy(autoTransparency = v) }
-                act { DeviceRepository.withDevice { it.setAutoTransparency(v) } }
-            }
-
-            SectionHeader("Controls")
-            SwitchItem(
-                "Touch controls", "Tap and swipe gestures on the earbuds",
-                s.touchControls, loaded, loading,
-            ) { v ->
-                update { copy(touchControls = v) }
-                act { DeviceRepository.withDevice { it.setTouchControls(v) } }
-            }
-            // One row per configurable button: earbuds report a left and a
-            // right shortcut, headphones a single one.
-            if (loading) {
-                repeat(2) { ShortcutRowSkeleton() }
-            }
-            s.buttons.sortedByDescending { it.buttonId }.forEach { button ->
+            // Everything below lives on the device. Hidden rather than greyed out
+            // while disconnected: their values are unknown, and showing a switch
+            // in some arbitrary position would be a lie.
+            if (!state.connected) {
+                DisconnectedCard(
+                    busy = state.busy,
+                    error = state.lastError,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                ) { DeviceRepository.onDeviceAppeared() }
+            } else {
+                ListItem(
+                    headlineContent = { Text("Equalizer") },
+                    supportingContent = { Text("Bass, mid and treble") },
+                    modifier = Modifier.clickable(onClick = onOpenEq),
+                )
                 RadioPickerItem(
-                    title = buttonTitle(button.buttonId),
-                    subtitle = "Touch and hold: " +
-                            (BUTTON_ACTIONS[button.action] ?: "Action ${button.action}"),
-                    enabled = loaded && s.touchControls,
-                    loading = false,
-                    options = shortcutOptions(button),
-                    selected = button.action,
-                ) { action ->
-                    update {
-                        copy(buttons = buttons.map {
-                            if (it.buttonId == button.buttonId) it.copy(action = action) else it
-                        })
-                    }
-                    act {
-                        DeviceRepository.withDevice {
-                            it.setButtons(button.buttonId, button.event, action)
+                    title = "Hear your own voice in calls",
+                    subtitle = "Plays your voice back during calls: " +
+                            sidetoneLabels.getValue(s.sidetone),
+                    enabled = loaded,
+                    loading = loading,
+                    options = sidetoneLabels.mapKeys { it.key.value },
+                    selected = s.sidetone.value,
+                ) { value ->
+                    val level = Sidetone.fromValue(value)
+                    update { copy(sidetone = level) }
+                    act { DeviceRepository.withDevice { it.setSidetone(level) } }
+                }
+                SwitchItem(
+                    "Voice prompts",
+                    // Don't show a default language before the device has answered.
+                    if (loading) "Spoken announcements"
+                    else "Spoken announcements (language: " +
+                            "${VOICE_LANGUAGES[s.promptsLanguage] ?: "unknown"})",
+                    s.promptsEnabled, loaded, loading,
+                ) { v ->
+                    update { copy(promptsEnabled = v) }
+                    act { DeviceRepository.withDevice { it.setVoicePrompts(v, s.promptsLanguage) } }
+                }
+
+                SectionHeader("In-ear detection")
+                SwitchItem("Auto play/pause", "Pause when an earbud is removed",
+                    s.autoPause, loaded, loading) { v ->
+                    update { copy(autoPause = v) }
+                    act { DeviceRepository.withDevice { it.setAutoPause(v) } }
+                }
+                SwitchItem("Auto-answer calls", "Answer by putting an earbud in",
+                    s.autoAnswer, loaded, loading) { v ->
+                    update { copy(autoAnswer = v) }
+                    act { DeviceRepository.withDevice { it.setAutoAnswer(v) } }
+                }
+                SwitchItem(
+                    "Auto transparency",
+                    "Let outside sound through while only one earbud is worn",
+                    s.autoTransparency, loaded, loading,
+                ) { v ->
+                    update { copy(autoTransparency = v) }
+                    act { DeviceRepository.withDevice { it.setAutoTransparency(v) } }
+                }
+
+                SectionHeader("Controls")
+                SwitchItem(
+                    "Touch controls", "Tap and swipe gestures on the earbuds",
+                    s.touchControls, loaded, loading,
+                ) { v ->
+                    update { copy(touchControls = v) }
+                    act { DeviceRepository.withDevice { it.setTouchControls(v) } }
+                }
+                // One row per configurable button: earbuds report a left and a
+                // right shortcut, headphones a single one.
+                if (loading) {
+                    repeat(2) { ShortcutRowSkeleton() }
+                }
+                s.buttons.sortedByDescending { it.buttonId }.forEach { button ->
+                    RadioPickerItem(
+                        title = buttonTitle(button.buttonId),
+                        subtitle = "Touch and hold: " +
+                                (BUTTON_ACTIONS[button.action] ?: "Action ${button.action}"),
+                        enabled = loaded && s.touchControls,
+                        loading = false,
+                        options = shortcutOptions(button),
+                        selected = button.action,
+                    ) { action ->
+                        update {
+                            copy(buttons = buttons.map {
+                                if (it.buttonId == button.buttonId) it.copy(action = action) else it
+                            })
+                        }
+                        act {
+                            DeviceRepository.withDevice {
+                                it.setButtons(button.buttonId, button.event, action)
+                            }
                         }
                     }
                 }
-            }
 
-            SectionHeader("Bluetooth & device")
-            ListItem(
-                headlineContent = { Text("Bluetooth pairing mode") },
-                supportingContent = { Text("Make the headphones discoverable for a new device") },
-                trailingContent = {
-                    Button(
-                        onClick = { act { DeviceRepository.withDevice { it.setPairingMode(true) } } },
-                        enabled = state.connected,
-                    ) { Text("Start") }
-                },
-            )
-            SwitchItem("Multipoint", "Connect two devices at once",
-                s.multipoint, loaded, loading) { v ->
-                update { copy(multipoint = v) }
-                act { DeviceRepository.withDevice { it.setMultipoint(v) } }
+                SectionHeader("Bluetooth & device")
+                ListItem(
+                    headlineContent = { Text("Bluetooth pairing mode") },
+                    supportingContent = {
+                        Text("Make the headphones discoverable for a new device")
+                    },
+                    trailingContent = {
+                        Button(onClick = {
+                            act { DeviceRepository.withDevice { it.setPairingMode(true) } }
+                        }) { Text("Start") }
+                    },
+                )
+                SwitchItem("Multipoint", "Connect two devices at once",
+                    s.multipoint, loaded, loading) { v ->
+                    update { copy(multipoint = v) }
+                    act { DeviceRepository.withDevice { it.setMultipoint(v) } }
+                }
+                ListItem(
+                    headlineContent = { Text("Device name") },
+                    supportingContent = { Text(state.deviceName ?: "") },
+                    modifier = Modifier.clickable { showRename = true },
+                )
+                ListItem(
+                    headlineContent = {
+                        Text("Power off", color = MaterialTheme.colorScheme.error)
+                    },
+                    modifier = Modifier.clickable { showPowerOff = true },
+                )
             }
-            ListItem(
-                headlineContent = { Text("Device name") },
-                supportingContent = { Text(state.deviceName ?: "") },
-                modifier = Modifier.clickableIf(state.connected) { showRename = true },
-            )
-            ListItem(
-                headlineContent = {
-                    Text("Power off", color = MaterialTheme.colorScheme.error)
-                },
-                modifier = Modifier.clickableIf(state.connected) { showPowerOff = true },
-            )
 
             HorizontalDivider()
             ListItem(
                 headlineContent = { Text("Change device") },
                 supportingContent = { Text("Set up different headphones") },
-                modifier = Modifier.clickableIf(true) {
+                modifier = Modifier.clickable {
                     scope.launch {
                         DeviceRepository.clearDevice()
                         onBack()

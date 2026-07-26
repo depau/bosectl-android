@@ -171,9 +171,14 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun DisconnectedCard(busy: Boolean, error: String?, onRetry: () -> Unit) {
+fun DisconnectedCard(
+    busy: Boolean,
+    error: String?,
+    modifier: Modifier = Modifier,
+    onRetry: () -> Unit,
+) {
     Card(
-        Modifier.fillMaxWidth().padding(top = 8.dp),
+        modifier.fillMaxWidth().padding(top = 8.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),

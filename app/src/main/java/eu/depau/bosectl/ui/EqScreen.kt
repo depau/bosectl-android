@@ -37,7 +37,10 @@ fun EqScreen(onBack: () -> Unit) {
     var bands by remember { mutableStateOf<List<EqBand>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
+    // Reading the bands must not be what connects; if the earbuds go away while
+    // this screen is open, pick the values back up when they return.
+    LaunchedEffect(state.connected) {
+        if (!state.connected) return@LaunchedEffect
         runCatching { DeviceRepository.withDevice { it.eq() } }
             .onSuccess { bands = it }
             .onFailure { error = it.message }
