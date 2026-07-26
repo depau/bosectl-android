@@ -2,18 +2,16 @@ package eu.depau.bosectl.ui
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,8 +43,10 @@ import eu.depau.bosectl.data.DeviceRepository
 import kotlinx.coroutines.launch
 
 /**
- * The firmware accepts all 37 prompt ids, but only these have a recorded
- * announcement — the rest switch silently. This is the official app's list.
+ * The prompts the official app offers when creating a mode. The firmware accepts
+ * all 37 ids and the presets use ids outside this list (Quiet, Aware, Immersion,
+ * Cinema), which the earbuds do announce — this is a picker whitelist, not the
+ * set of prompts that have audio.
  */
 private val ANNOUNCED_PROMPTS = listOf(
     Prompt.COMMUTE, Prompt.FOCUS, Prompt.HOME, Prompt.MUSIC, Prompt.OUTDOOR,
@@ -117,46 +117,46 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Column {
-                Text("Icon and voice prompt", style = MaterialTheme.typography.titleSmall)
-                // The icon doubles as the announcement, which isn't obvious from
-                // a grid of glyphs — spell out what the earbuds will say.
-                Text(
-                    Prompt.fromId(promptId).let {
-                        if (it == null || it !in ANNOUNCED_PROMPTS) "Switches silently"
-                        else "Announced as \"${it.label}\""
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            LazyHorizontalGrid(
-                rows = GridCells.Fixed(2),
-                modifier = Modifier.fillMaxWidth().height(112.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(pickerPrompts, key = { it.id }) { prompt ->
-                    val selected = prompt.id == promptId
-                    Surface(
-                        shape = CircleShape,
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .let {
-                                if (selected) it.border(
-                                    2.dp, MaterialTheme.colorScheme.primary, CircleShape
-                                ) else it
-                            }
-                            .clickable(enabled = editable) { promptId = prompt.id },
-                    ) {
-                        Icon(
-                            prompt.icon, contentDescription = prompt.label,
-                            Modifier.padding(12.dp),
-                            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+            // Presets can't change theirs, so the grid is only noise there.
+            if (editable) {
+                Column {
+                    Text("Icon and voice prompt", style = MaterialTheme.typography.titleSmall)
+                    // The icon doubles as the announcement, which isn't obvious
+                    // from a grid of glyphs — spell out what the earbuds will say.
+                    Prompt.fromId(promptId)?.let {
+                        Text(
+                            "Announced as \"${it.label}\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    pickerPrompts.forEach { prompt ->
+                        val selected = prompt.id == promptId
+                        Surface(
+                            shape = CircleShape,
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .let {
+                                    if (selected) it.border(
+                                        2.dp, MaterialTheme.colorScheme.primary, CircleShape
+                                    ) else it
+                                }
+                                .clickable { promptId = prompt.id },
+                        ) {
+                            Icon(
+                                prompt.icon, contentDescription = prompt.label,
+                                Modifier.padding(12.dp),
+                                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
