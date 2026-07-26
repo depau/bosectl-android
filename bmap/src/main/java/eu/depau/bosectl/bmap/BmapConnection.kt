@@ -100,22 +100,6 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
     suspend fun deviceExtendedInfo(mac: String): DeviceExtendedInfo? =
         parseDeviceExtendedInfo(get(Addr.DEV_EXTENDED_INFO, macToBytes(mac)))
 
-    /**
-     * The device list with names. [4.4] carries only MACs, so this costs one
-     * [4.5] GET per device — six is the realistic worst case.
-     *
-     * The connected flag is taken from the [4.4] frame rather than [4.5]'s own
-     * bit: [4.4] is one consistent snapshot, and the per-device reads happen
-     * afterwards. A device whose info read fails still appears, named by MAC.
-     */
-    suspend fun pairedDevices(): List<PairedDevice> = deviceList().map { (mac, connected) ->
-        runCatching { deviceInfo(mac) }.getOrNull()?.copy(connected = connected)
-            ?: PairedDevice(
-                mac = mac, name = mac, connected = connected,
-                isLocalDevice = false, isBoseProduct = false,
-            )
-    }
-
     /** MAC of the device currently holding audio. Read-only on this firmware. */
     suspend fun activeSource(): String? = parseActiveSource(get(Addr.ACTIVE_SOURCE))
 

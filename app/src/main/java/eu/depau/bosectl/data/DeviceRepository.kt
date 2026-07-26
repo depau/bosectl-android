@@ -14,10 +14,14 @@ import eu.depau.bosectl.bmap.BmapException
 import eu.depau.bosectl.bmap.Favorites
 import eu.depau.bosectl.bmap.ModeConfig
 import eu.depau.bosectl.bmap.Op
+import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.bmap.RfcommTransport
 import eu.depau.bosectl.bmap.Spatial
+import eu.depau.bosectl.bmap.parseActiveSource
 import eu.depau.bosectl.bmap.parseAudioSettings
 import eu.depau.bosectl.bmap.parseBattery
+import eu.depau.bosectl.bmap.mergePairedDevices
+import eu.depau.bosectl.bmap.parseDeviceList
 import eu.depau.bosectl.bmap.parseFavorites
 import eu.depau.bosectl.bmap.parseModeConfig
 import eu.depau.bosectl.widget.BoseWidget
@@ -49,12 +53,18 @@ data class BoseState(
     val favorites: Favorites? = null,
     val audioSettings: AudioSettings? = null,
     val touchControls: Boolean? = null,
+    /** Devices the earbuds know about, in the order [4.4] last reported them. */
+    val pairedDevices: List<PairedDevice> = emptyList(),
+    /** MAC of the device currently holding audio, from [5.1]. */
+    val activeSourceMac: String? = null,
     val lastError: String? = null,
 ) {
     val starredModes: List<ModeConfig>
         get() = modes.filter { favorites?.starred?.contains(it.modeIdx) == true && !it.isFreeSlot }
     val currentMode: ModeConfig?
         get() = modes.firstOrNull { it.modeIdx == currentModeIdx }
+    val connectedDevices: List<PairedDevice>
+        get() = pairedDevices.filter { it.connected }
 }
 
 /**
@@ -263,11 +273,80 @@ object DeviceRepository {
                 touchControls = touch ?: _state.value.touchControls,
                 lastError = null,
             )
+            // Non-fatal: the device list is a nice-to-have next to modes and
+            // battery, and it must not fail the whole refresh.
+            runCatching { loadDevices(conn) }
+                .onFailure { Log.d(TAG, "Device list refresh failed: ${it.message}") }
         } catch (e: Exception) {
             onIoFailure(e)
             throw e
         }
         persistWidgetCache()
+    }
+
+    // ── Paired devices [4.4]/[4.5]/[5.1] ─────────────────────────────────────
+
+    /**
+     * Fold a fresh [4.4] list into state. Synchronous by design: this also runs
+     * from the unsolicited collector, which must never touch the transport (see
+     * [onUnsolicited]). Names for unseen MACs arrive later via [fillDeviceNames].
+     */
+    private fun mergeDeviceList(entries: List<Pair<String, Boolean>>) {
+        _state.value = _state.value.copy(
+            pairedDevices = mergePairedDevices(_state.value.pairedDevices, entries)
+        )
+    }
+
+    /**
+     * Read [4.5] for devices we have no name for. Names don't change, so this
+     * costs one GET each on first sight and nothing thereafter — which is what
+     * keeps a refresh down to one [4.4] plus one [5.1].
+     */
+    private suspend fun fillDeviceNames(conn: BmapConnection) {
+        val missing = _state.value.pairedDevices.filter { it.name.isEmpty() }
+        if (missing.isEmpty()) return
+        val resolved = missing.mapNotNull { device ->
+            runCatching { conn.deviceInfo(device.mac) }.getOrNull()
+        }.associateBy { it.mac }
+        if (resolved.isEmpty()) return
+        // Re-read state: the list may have changed while we were reading.
+        _state.value = _state.value.copy(
+            pairedDevices = _state.value.pairedDevices.map { device ->
+                resolved[device.mac]?.let {
+                    device.copy(
+                        name = it.name, isLocalDevice = it.isLocalDevice,
+                        isBoseProduct = it.isBoseProduct,
+                    )
+                } ?: device
+            }
+        )
+    }
+
+    private suspend fun loadDevices(conn: BmapConnection) {
+        mergeDeviceList(conn.deviceList())
+        runCatching { conn.activeSource() }.getOrNull()?.let {
+            _state.value = _state.value.copy(activeSourceMac = it)
+        }
+        fillDeviceNames(conn)
+    }
+
+    /** Re-read the device list on demand (Connections screen pull/open). */
+    suspend fun refreshDevices() = action { loadDevices(it) }
+
+    suspend fun disconnectSource(mac: String) = action { conn ->
+        conn.disconnectDevice(mac)
+        loadDevices(conn)
+    }
+
+    /**
+     * [4.1] acks with PROCESSING and the link comes up a few seconds later, so
+     * there is nothing useful to read here — the [4.4] push reports the result.
+     */
+    suspend fun connectSource(mac: String) = action { conn -> conn.connectDevice(mac) }
+
+    suspend fun forgetSource(mac: String) = action { conn ->
+        conn.forgetDevice(mac)
+        loadDevices(conn)
     }
 
     /** Device-pushed STATUS frames (e.g. mode switched via earbud gestures). */
@@ -288,6 +367,21 @@ object DeviceRepository {
                 }
             packet.matches(BmapConnection.Addr.BATTERY) ->
                 _state.value = s.copy(battery = parseBattery(packet.payload))
+            // Pushed on every connect/disconnect once block 4 is subscribed —
+            // this is what makes the device list live. Merge synchronously and
+            // hand any name lookup to the repository scope: this collector runs
+            // while the transport's request mutex may be held, so calling the
+            // device from here can deadlock once the push buffer fills.
+            packet.matches(BmapConnection.Addr.DEV_LIST) -> {
+                mergeDeviceList(parseDeviceList(packet.payload))
+                if (_state.value.pairedDevices.any { it.name.isEmpty() }) {
+                    runAsync { connection?.let { fillDeviceNames(it) } }
+                }
+            }
+            packet.matches(BmapConnection.Addr.ACTIVE_SOURCE) ->
+                parseActiveSource(packet.payload)?.let {
+                    _state.value = s.copy(activeSourceMac = it)
+                }
             else -> return
         }
         persistWidgetCache()

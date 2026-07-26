@@ -266,6 +266,28 @@ fun parseDeviceInfo(payload: ByteArray): PairedDevice? {
     )
 }
 
+/**
+ * Fold a fresh [4.4] list into whatever is already known, keeping names.
+ *
+ * [4.4] carries MACs but no names, and it reorders between reads, so: the
+ * incoming order wins outright, and cached entries are matched **by MAC only,
+ * never by position**. Devices not seen before come back with an empty name for
+ * the caller to fill in from [4.5]; devices no longer listed are dropped.
+ */
+fun mergePairedDevices(
+    cached: List<PairedDevice>,
+    entries: List<Pair<String, Boolean>>,
+): List<PairedDevice> {
+    val known = cached.associateBy { it.mac }
+    return entries.map { (mac, connected) ->
+        known[mac]?.copy(connected = connected)
+            ?: PairedDevice(
+                mac = mac, name = "", connected = connected,
+                isLocalDevice = false, isBoseProduct = false,
+            )
+    }
+}
+
 /** ExtendedInfo [4.6] STATUS: [mac(6), pairedMask, connectedMask, 54, 14]. */
 fun parseDeviceExtendedInfo(payload: ByteArray): DeviceExtendedInfo? {
     if (payload.size < MAC_LEN + 2) return null
@@ -296,8 +318,12 @@ object NotificationBitmask {
     const val DISABLE: Byte = 2
 }
 
-/** Blocks whose changes the UI cares about: settings, status, audio, modes. */
-val NOTIFY_BLOCKS = listOf(1, 2, 5, 31)
+/**
+ * Blocks whose changes the UI cares about: settings, status, device management,
+ * audio, modes. Block 4 makes the earbuds push an updated [4.4] on every
+ * connect and disconnect, which is what keeps the device list live.
+ */
+val NOTIFY_BLOCKS = listOf(1, 2, 4, 5, 31)
 
 /**
  * [9.2] payload: [bitmask][4-byte big-endian bitset], bit index = function

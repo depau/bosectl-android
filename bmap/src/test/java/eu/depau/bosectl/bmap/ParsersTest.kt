@@ -334,6 +334,40 @@ class DeviceManagementTest {
         assertNull(parseActiveSource(hex("000f01")))
     }
 
+    /**
+     * The merge has to survive the reorder, because that is what actually
+     * happens between two reads: names learned from [4.5] must follow their MAC
+     * to its new position, and the connected flags must come from the new frame
+     * rather than from the cached entries.
+     */
+    @Test
+    fun mergeKeepsNamesAcrossAReorder() {
+        val cached = listOf(
+            PairedDevice(laptop, "Frigo", connected = true, isLocalDevice = true, isBoseProduct = false),
+            PairedDevice(phone, "Pixel 9 Pro", connected = true, isLocalDevice = false, isBoseProduct = false),
+        )
+        // Phone first now, and only the laptop still connected.
+        val merged = mergePairedDevices(cached, listOf(phone to false, laptop to true))
+
+        assertEquals(listOf(phone, laptop), merged.map { it.mac })
+        assertEquals(listOf("Pixel 9 Pro", "Frigo"), merged.map { it.name })
+        assertFalse(merged[0].connected)
+        assertTrue(merged[1].connected)
+        assertTrue(merged[1].isLocalDevice)
+    }
+
+    @Test
+    fun mergeAddsUnknownDevicesUnnamedAndDropsVanishedOnes() {
+        val cached = listOf(
+            PairedDevice(laptop, "Frigo", connected = true, isLocalDevice = true, isBoseProduct = false)
+        )
+        val merged = mergePairedDevices(cached, listOf("94:E7:0B:DB:B1:26" to false))
+        assertEquals(1, merged.size)
+        assertEquals("94:E7:0B:DB:B1:26", merged[0].mac)
+        // Empty name is the signal to go read [4.5] for it.
+        assertEquals("", merged[0].name)
+    }
+
     @Test
     fun connectPayloadCarriesAddressTypeByte() {
         // [4.1] takes a leading 00; [4.2] and [4.3] take a bare MAC.
