@@ -113,8 +113,15 @@ check that subscription before adding polling.
 
 Unknown registers are found by diffing a Settings GetAll before and after
 toggling one setting in the official Bose app. `[1.29]` (auto transparency) and
-`[1.34]` (touch controls) were both found this way; `[1.20]` and `[1.30]` are
-still unidentified.
+`[1.34]` (touch controls) were both found this way.
+
+To *name* a register rather than find it, the decompiled official app is faster:
+`com.bose.bmap.messages.enums.spec.BmapFunction` enumerates every block/function
+id, and `messages/{packets,responses}/` carries the payload codec for most of
+them. That is how `[1.20]` and `[1.30]` were resolved. A name from there is a
+hypothesis, not a verified format — the app is one firmware's client, and it
+ignores fields this firmware sends (see `[4.4]` byte 0 in `docs/PROTOCOL.md`
+§14). Confirm against a capture before relying on it.
 
 ## Git
 

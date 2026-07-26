@@ -140,14 +140,22 @@ setting in the official app — a reliable way to locate any unknown register.
 
 | Address | Setting | Values |
 |---|---|---|
+| `[1.20]` | Auto-off on motion inactivity (`SettingsMotionInactivityAutoOff`) | `01` on / `00` off |
 | `[1.29]` | Auto transparency (pass-through while only one bud is worn) | `01` on / `00` off |
+| `[1.30]` | `SettingsSourceBargeIn` — reads `00`, refuses writes, see §14 | — |
 | `[1.34]` | Touch controls master enable | `01` on / `00` off |
+
+`[1.20]` and `[1.30]` were named from the official app's `BmapFunction` enum,
+which lists every Settings id and also confirms `[1.29]` = `SettingsAutoAwareMode`
+and `[1.34]` = `SettingsDisableCaptouch`. The enum is the cheapest way to name an
+unknown register: `com.bose.bmap.messages.enums.spec.BmapFunction`. Only `[1.20]`
+has a verified value here; `[1.30]`'s meaning is inferred from its name alone.
 
 `[1.34]` is independent of the per-button actions in `[1.9]`: disabling touch
 controls leaves both shortcut assignments intact, mirroring the official app's
 separate toggle + radio list.
 
-Still unidentified, both plain booleans: `[1.20]` (`01`) and `[1.30]` (`00`).
+No unidentified registers remain in this enumeration.
 
 Full settings enumeration returned by `GetAll [1.1]` on this firmware:
 `[1.0] [1.2] [1.3] [1.5] [1.7] [1.9]×2 [1.10] [1.11] [1.12] [1.20] [1.24]
@@ -199,8 +207,17 @@ Ruled out experimentally: with music playing, the phone volume was driven
 | `[5.5]` | `1f0e` | Never changed with volume; errors when idle |
 | `[5.7]`, `[5.13]` | drifting | Latency/codec values, change on their own |
 
-`[5.2]` and `[5.6]` are auth-gated (error 5). `GetAll [5.1] START` is also
-auth-gated, though plain `GET [5.1]` works and returns the active source.
+`[5.2]` and `[5.6]` answer a GET with error 5, but that is the wrong operator,
+not auth: **`GetAll [5.2] START` works** and drains `[5.0] [5.1] [5.3] [5.4]
+[5.5] [5.7] [5.13] [5.17]` in one burst. `GET [5.1]` works too and returns the
+active source (§14).
+
+`ponytail:` `[5.5]` read `1f0e` while the phone was the active source and `1f0a`
+while the laptop was — i.e. it *does* move, just not with the volume of the
+phone that the ruling-out experiment drove. Per-source volume is a plausible
+reading and would overturn the paragraph above; one observation is not enough to
+act on. Re-test by driving the volume of whichever device `[5.1]` currently
+names.
 
 ## 9. Current mode `[31.3]` can be `0xff`
 
@@ -385,6 +402,174 @@ cross-check when a BMAP reading looks wrong.
   and `ActionButtonMode.ClientInteraction` (15) is absent from this device's
   supported mask `000b4002` — the app's own label mapper calls 15 unknown.
 - The action enum matches `BUTTON_ACTIONS` in `Types.kt`, including the gap at 18.
+
+---
+
+## 14. Multipoint devices `[4.x]` — list, connect, disconnect
+
+Everything below was read off the earbuds. Wire formats were cross-checked
+against the official app's
+`com.bose.bmap.messages.{packets,responses}.DeviceManagement*`, but the values
+are from this unit.
+
+### What the firmware actually implements
+
+GET sweep of block 4:
+
+| Address | Name | GET result |
+|---|---|---|
+| `[4.0]` | FblockInfo | `"1.1.0"` |
+| `[4.1]` | Connect | STATUS `000003` |
+| `[4.2]` | Disconnect | error 5 — GET is not a valid operator, **START works** |
+| `[4.3]` | RemoveDevice | error 5 — START presumably works, untested |
+| `[4.4]` | ListDevices | STATUS, see below |
+| `[4.5]` | Info | error 6 without a payload; takes a MAC |
+| `[4.6]` | ExtendedInfo | error 6 without a payload; takes a MAC |
+| `[4.7]` | ClearDeviceList | error 5 |
+| `[4.8]` | PairingMode | STATUS `00` |
+| `[4.9]` | AppAddress | STATUS = MAC of the device running the app |
+| `[4.14]` | Features | STATUS `01` — capability bits, see below |
+| `[4.15]` | BoseProduct | error 1 (Length) — takes a payload |
+| `[4.18]` | AvailableToConnect | STATUS `01` |
+| `[4.10-13]`, `[4.16]`, `[4.17]`, `[4.19]` | P2p, Routing, ConnectionPriority, UserCarouselSelect, LeAudioCheck | error 4, not supported |
+
+bosectl's block-4 list (`NOTES.md`) omits `[4.5]` and `[4.6]`, which do exist —
+one more reason not to trust it. Its `[4.12]` label "switch active multipoint
+device" is moot: `[4.12]` is `FuncNotSupp` here, as is `[0.11]`
+ComponentDevices.
+
+### `[4.4]` ListDevices — byte 0 is a connected-bitmask, and the list reorders
+
+```
+[4.4] GET  ->  STATUS  [connectedMask, mac(6) × n]
+```
+
+Bit *i* of byte 0 is set when list entry *i* is connected. It is **not** a
+count — with exactly one device connected at index 1 it reads `02`:
+
+```
+03 5cf3709b8cff 088bc851d48d 842f…    # laptop + phone
+02 088bc851d48d 5cf3709b8cff 842f…    # phone dropped; laptop is index 1
+01 5cf3709b8cff 088bc851d48d 842f…    # same one device, list reordered
+```
+
+That third line is the trap: **the order is not stable across reads.** Pair the
+mask with the MACs from the same frame and never cache a position. The official
+app skips byte 0 entirely and calls `[4.5]` per MAC instead.
+
+A payload of length 1 (mask only, no MACs) means an empty list.
+
+### `[4.5]` Info and `[4.6]` ExtendedInfo — one MAC per query
+
+```
+[4.5] GET  [mac(6)]  ->  STATUS  [mac(6), flags, b7, b8, (variant), name…]
+```
+
+`flags` (byte 6): bit0 connected · bit1 isLocalDevice · bit2 isBoseProduct ·
+bit3 isComponent · bit7 productType.
+
+- isBoseProduct set: bytes 7-8 product id big-endian, byte 9 variant, name from byte 10.
+- otherwise: byte 7 major device class, byte 8 minor device class, name from byte 9.
+
+The name is UTF-8 running to the end of the payload — not NUL-terminated, no
+length prefix. Every non-Bose device on this firmware reported major/minor
+`02 03`, phone and laptop alike, so treat those two bytes as meaningless here.
+
+```
+5cf3709b8cff 03 0203 "Frigo"          # connected, isLocalDevice -> this host
+088bc851d48d 00 0203 "Pixel 9 Pro"    # known but not connected
+```
+
+`isLocalDevice` matches `[4.9]` AppAddress, which is how you tell which entry is
+the machine you are talking from.
+
+```
+[4.6] GET  [mac(6)]  ->  STATUS  [mac(6), pairedProfiles, connProfiles, 54, 14]
+```
+
+Profile bits in both masks: 0 a2dp · 1 hfp · 2 avrcp · 3 spp · 4 iap. A fully
+connected phone reads `0f 0f`; a known-but-idle device `0f 00`. The trailing
+`5414` was constant across all six devices and is not parsed by the official
+app.
+
+### Connect and disconnect are unauthenticated STARTs
+
+```
+[4.2] START  [mac(6)]
+  -> [4.2] PROCESSING  [reason, mac(6)]      reason 0x21 observed
+  -> [4.2] RESULT      [mac(6)]
+
+[4.1] START  [0x00, mac(6)]
+  -> [4.1] PROCESSING  [mac(6)]
+```
+
+`[4.1]` returns no RESULT within a few seconds — poll `[4.4]` instead. Verified
+end to end: with the phone disconnected from the phone's own side, `[4.1]`
+brought it back and the `[4.4]` mask went `01` → `03` in about four seconds.
+`[4.2]` on the phone dropped it and the mask went `03` → `02`.
+
+`[4.1]` has two further payload forms in the official app, neither needed here:
+`[0x01, utf8 name]` and `[(productType << 7) | 0x10, mac(6), localMac(6)]` for
+Bose-to-Bose. `[4.3]` RemoveDevice takes a bare `mac(6)` and `[4.7]`
+ClearDeviceList takes none; both are `ponytail:` **untested — they destroy
+pairings.**
+
+### Error 5 on a GET does not mean "auth"
+
+`[4.2]`, `[4.3]` and `[4.7]` all answer a GET with error 5 `OpNotSupp` and yet
+accept an unauthenticated START. `OpNotSupp` means *that operator* is not valid
+for that function — for an action function, GET never is. Do not read the
+block-31 auth pattern into it.
+
+### `[4.14]` Features — the capability bits that close the question
+
+The official app parses `[4.14]`'s single byte as three booleans
+(`messages/models/devicemanagement/FeatureInfo`):
+
+| Bit | Capability | This unit (`01`) |
+|---|---|---|
+| 0 | `cTKDSupported` | yes |
+| 1 | `deviceCarouselSupported` | **no** |
+| 2 | `sourceBargeInSupported` | **no** |
+
+Read this register before implementing anything source-related — it is the
+firmware telling you up front which of the mechanisms below exist.
+
+### There is no "move audio to this device" command
+
+Four independent confirmations, which is why this is settled rather than
+merely un-found:
+
+1. `[4.14]` bit 1 and bit 2 are both clear — the firmware declares device
+   carousel and source barge-in unsupported.
+2. `[4.17]` UserCarouselSelect is `FuncNotSupp`, as are `[4.12]` Routing and
+   `[4.16]` ConnectionPriority.
+3. `ActionButtonMode.SwitchSourceDevice` is action **8**, and bit 8 is absent
+   from this device's shortcut mask `000b4002` (§3) — the "Switch Devices"
+   gesture the product tour describes is not offered on this model.
+4. The official app's own "Switch Connections" flow says exactly what it does:
+   *"This will disconnect %s from %s and attempt to connect to %s."* Bose has no
+   source-select command either.
+
+`[5.1] GET` reports the **active source** (§8) and is read-only in practice: 19
+SETGET payload shapes were rejected with error 6, including the empty payload,
+which would be error 1 if the firmware were really parsing a shape. START on
+`[5.1]` is error 5.
+
+So moving audio means disconnecting whichever device currently holds it —
+`[5.1]` names it, `[4.2]` drops it, and **playback moves to the remaining
+connected device** (verified: dropping the phone handed audio to the laptop).
+Connecting a second device with `[4.1]` does *not* hand it the audio; after the
+phone reconnected, `[5.1]` still reported the laptop.
+
+### `[1.30]` SourceBargeIn — a capability gate, not a payload problem
+
+`[1.30]` reads `00` and every SETGET (`01`, `0001`, `0101`) returns error 10
+`InvalidState`, retried with only one device connected in case multipoint was
+the blocking state. The error code was the clue and `[4.14]` bit 2 is the
+answer: **the firmware advertises source barge-in as unsupported**, so the
+function exists in the enum and refuses on state rather than on data. Not worth
+further payload guessing.
 
 ---
 
