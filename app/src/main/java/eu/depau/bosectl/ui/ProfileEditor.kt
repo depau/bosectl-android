@@ -44,16 +44,13 @@ import eu.depau.bosectl.bmap.Spatial
 import eu.depau.bosectl.data.DeviceRepository
 import kotlinx.coroutines.launch
 
-/** Icons offered by the official app's "new mode" page, in the same order. */
-private val PICKER_PROMPTS = listOf(
+/**
+ * The firmware accepts all 37 prompt ids, but only these have a recorded
+ * announcement — the rest switch silently. This is the official app's list.
+ */
+private val ANNOUNCED_PROMPTS = listOf(
     Prompt.COMMUTE, Prompt.FOCUS, Prompt.HOME, Prompt.MUSIC, Prompt.OUTDOOR,
     Prompt.RELAX, Prompt.RUN, Prompt.WALK, Prompt.WORK, Prompt.WORKOUT,
-    Prompt.QUIET, Prompt.AWARE, Prompt.IMMERSION, Prompt.CINEMA, Prompt.COMMUTE,
-).distinct() + listOf(
-    Prompt.FLIGHT, Prompt.AIRPORT, Prompt.DRIVING, Prompt.GYM, Prompt.HIKE,
-    Prompt.TALK, Prompt.CALL, Prompt.HEARING, Prompt.LEARN, Prompt.PODCAST,
-    Prompt.AUDIOBOOK, Prompt.CALM, Prompt.SLEEP, Prompt.MEDITATE, Prompt.YOGA,
-    Prompt.STEREO, Prompt.NONE,
 )
 
 /**
@@ -68,9 +65,16 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
     val isNew = mode == null
 
     var name by remember { mutableStateOf(mode?.name ?: "") }
-    var promptId by remember { mutableIntStateOf(mode?.promptId ?: Prompt.MUSIC.id) }
+    var promptId by remember { mutableIntStateOf(mode?.promptId ?: ANNOUNCED_PROMPTS.first().id) }
     var cncSlider by remember { mutableFloatStateOf((10 - (mode?.cncLevel ?: 0)).toFloat()) }
     var spatial by remember { mutableStateOf(mode?.spatial ?: Spatial.OFF) }
+    // A preset (or a profile made elsewhere) may use a prompt outside the
+    // announced set; keep it selectable so editing doesn't silently change it.
+    val pickerPrompts = remember(mode?.promptId) {
+        val current = Prompt.fromId(mode?.promptId ?: -1)
+        if (current != null && current !in ANNOUNCED_PROMPTS) ANNOUNCED_PROMPTS + current
+        else ANNOUNCED_PROMPTS
+    }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -119,7 +123,7 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
                 // a grid of glyphs — spell out what the earbuds will say.
                 Text(
                     Prompt.fromId(promptId).let {
-                        if (it == null || it == Prompt.NONE) "Switching to this mode is silent"
+                        if (it == null || it !in ANNOUNCED_PROMPTS) "Switches silently"
                         else "Announced as \"${it.label}\""
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -132,7 +136,7 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(PICKER_PROMPTS, key = { it.id }) { prompt ->
+                items(pickerPrompts, key = { it.id }) { prompt ->
                     val selected = prompt.id == promptId
                     Surface(
                         shape = CircleShape,
@@ -197,6 +201,9 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
                                     promptId = promptId,
                                     cncLevel = 10 - cncSlider.toInt(),
                                     spatial = spatial,
+                                    // A mode you just created is one you want to
+                                    // reach, so put it on the headset carousel.
+                                    favourite = isNew,
                                 )
                             }.onSuccess { onDismiss() }
                                 .onFailure {

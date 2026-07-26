@@ -300,8 +300,13 @@ object DeviceRepository {
 
     suspend fun saveProfile(
         slot: Int, name: String, promptId: Int, cncLevel: Int, spatial: Spatial,
+        favourite: Boolean = false,
     ) = action { conn ->
         conn.writeMode(slot, name, promptId, cncLevel, spatial)
+        if (favourite) {
+            val current = _state.value.favorites ?: conn.favorites()
+            current?.let { conn.setFavorites(it.copy(starred = it.starred + slot)) }
+        }
         refresh()
     }
 
