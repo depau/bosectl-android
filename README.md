@@ -27,20 +27,20 @@ Presets open read-only so you can inspect what they do.
 **Home-screen widget** — controls without opening the app, with a layout that
 adapts to the size you give it (minimum 3x1):
 
-| Height | Shows |
-|---|---|
-| 1 row | Header and starred modes as chips (with icons when wider than 3 cells) |
-| 2 rows | Header, square mode buttons, head tracking |
-| 3 rows | Adds ANC and touch-control toggles, plus a noise-cancelling stepper |
+| Height | Shows                                                                  |
+|--------|------------------------------------------------------------------------|
+| 1 row  | Header and starred modes as chips (with icons when wider than 3 cells) |
+| 2 rows | Header, square mode buttons, head tracking                             |
+| 3 rows | Adds ANC and touch-control toggles, plus a noise-cancelling stepper    |
 
 It renders from a cache, so it draws instantly and still works while
 disconnected; tapping a control then connects on demand.
 
 **Settings** — volume, equalizer, side tone, voice prompts, in-ear detection
-(auto play/pause, auto-answer, auto transparency), touch controls with per-side
+(autoplay/pause, auto-answer, auto transparency), touch controls with per-side
 shortcut actions, multipoint, pairing mode, rename, power off.
 
-Material 3 throughout, with dynamic colour.
+Material 3 throughout, with dynamic color.
 
 ## Requirements
 
