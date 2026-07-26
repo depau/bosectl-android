@@ -583,6 +583,101 @@ further payload guessing.
 
 ---
 
+## 15. BMAP over BLE/GATT — a second transport, gated on LE bonding
+
+BMAP is not RFCOMM-only. The earbuds expose the same protocol over GATT, and the
+official SDK carries three transports side by side (`com/bose/bmap/ble/`
+`BleConnectionManager`, `service/SppConnectionManager`, `ble/LecocConnectionManager`).
+All of them feed **one** parser — `parseBleBmapPacket()` → `parseBmapPacket()` — so
+there is no BLE-specific register set. Verified from Linux/BlueZ against the
+earbuds while they stayed connected over classic BT (audio undisturbed).
+
+### The GATT database
+
+```
+service 0000febe-0000-1000-8000-00805f9b34fb
+  d417c028-9818-4354-99d1-2ac09d074591  read,write,write-without-response,notify  RWN unsecure
+  c65b8f2f-aee2-4c89-b758-bc4892d6f2d8  read,write,write-without-response,notify  RWN secure
+  9edc3c01-6caa-4678-95a7-82f1746e5515  read,write,notify                        unknown
+  089ca084-6721-4419-9003-5e14d5ab587d  read                                     LE-CoC PSM
+```
+
+The service uses the **standard 16-bit base**; `BleConnectionManager.SERVICE_UUID`
+(`0000febe-0000-0000-0000-000000000000`) is dead code — the app looks characteristics
+up across all services. `9edc3c01-…` appears nowhere in the decompiled app.
+Reading the LE-CoC PSM characteristic times out and takes the link down with it.
+
+Other services present: `1800`, `1801`, `180a`, `fe2c` (Google Fast Pair),
+`fd92`, `eb10-d102-11e1-…` (Bose).
+
+### Framing: one segmentation byte in front of the RFCOMM frame
+
+Every ATT write and every notification is `[seg] + chunk`, where
+`seg = (lastIndex << 4) | index`, so `0x00` is a single unsegmented frame
+(`BleConnectionManager.asBmapWriteData`, `utils/PacketSegmentationUtil`). The
+reassembled buffer is one or more back-to-back standard BMAP frames — length is
+still `data[3] + 4`. Notifications use the same header and are reassembled until
+`(seg >> 4) == (seg & 0x0F)`. Chunk size is `MTU - 4`; max 16 segments.
+
+Verified at the 20-byte ATT payload a Connect IQ watch is limited to:
+
+```
+TX 00 00 01 01 00                      [0.1] GET, single segment
+RX 00 00 01 03 05 31 2e 32 2e 30       [0.1] STATUS "1.2.0"
+
+TX 10 00 07 01 18 00 01 … 0e           [0.7] GET + 24B junk payload, segment 0/1
+TX 11 0f 10 11 12 13 14 15 16 17       segment 1/1
+RX 00 00 07 03 11 30 38 36 32 …        [0.7] STATUS <serial> — reassembled
+```
+
+### Unbonded, almost everything is error 20 `InsecureTransport`
+
+A 25-address GET sweep on the **unsecure** characteristic without any LE bond:
+
+| Address | Result |
+|---------|--------|
+| `[0.1]` bmap version | `STATUS "1.2.0"` |
+| `[0.2]` all fblocks | `STATUS 8f cc 23 ff` |
+| `[4.14]` features | `STATUS 00` |
+| `[1.1] [2.1] [31.1]` GetAll | error 5 — wrong operator, as on RFCOMM |
+| `[2.10]` in-ear | error 4 `FuncNotSupp` |
+| everything else | **error 20 `InsecureTransport`** |
+
+Reads are unauthenticated over RFCOMM; over BLE the firmware requires an
+encrypted link for all of it, including `[9.2]`. So the unsecure characteristic is
+only good for the pre-pairing setup the app uses it for (`defpackage/P20`
+BLE-connects with `forceUnsecureCharacteristic` purely to read the static MAC).
+
+### Bonding needs pairing mode, and then the whole register set works
+
+`Device1.Pair()` on the rotating random address fails with
+`org.bluez.Error.AuthenticationFailed` — SMP is rejected before any agent prompt,
+with or without an existing connection. **In pairing mode the earbuds advertise
+their identity (public) address instead of a random one**, and bonding to that
+succeeds. Pairing mode is visible in the advertisement: manufacturer data (company
+`0x009E`) value byte 2 bit 3, per `SpitfireAdvertisingPacket.getInPairingMode`.
+
+On the bonded link, the secure characteristic answers exactly like RFCOMM
+(`[0.5]` firmware `8.4.8+gbb2cb60`, `[0.3]` `40 62 05`, `[1.9]` one STATUS per
+button, `[2.2]` the repeating 4-byte battery groups of §2, `[4.4]` the device
+list of §14). Only `[1.1]`/`[2.1]`/`[31.1]` (error 5) and `[2.10]` (error 4)
+differ from nothing — they fail the same way on RFCOMM.
+
+### Advertisement identifies the product
+
+Manufacturer data starts with the Bose company id `0x009E`; then format byte,
+then a byte holding `bleProductId` in bits 0-4 and variant in bits 5-7. BMAP
+1.2.0 adds 100 to the product id (`BoseProductIdSupport.OFFSET_BLE_120_FORMAT_VSPITFIRE`).
+Observed `00 a8 06 …` → format 0, id `100 + 8 = 108` = `Edith` = QC Ultra 2
+Earbuds, variant 5. Then prand (3 bytes) and Bose's resolvable MAC (3 bytes).
+
+`ponytail:` untested over BLE — whether the firmware segments *notifications*
+down to 20 bytes when the MTU is 23. BlueZ negotiates a large MTU and does not
+expose a way to force the minimum, so a GATT client that cannot negotiate MTU
+(Connect IQ, for one) may see truncated pushes.
+
+---
+
 ## Reproducing: the probe build
 
 The app carries an on-device protocol probe in a dedicated `probe` product
