@@ -37,6 +37,10 @@
             android:name=".ui.EqActivity"
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.ConnectionsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
 
         <service
             android:name=".service.BoseConnectionService"

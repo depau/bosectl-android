@@ -54,28 +54,21 @@ fun deviceAction(block: suspend () -> Unit) = DeviceRepository.runAsync(block)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
+fun HomeScreen(
+    onOpenProfiles: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenConnections: () -> Unit,
+) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
     var disconnectTarget by remember { mutableStateOf<PairedDevice?>(null) }
 
     disconnectTarget?.let { device ->
-        AlertDialog(
-            onDismissRequest = { disconnectTarget = null },
-            title = { Text("Disconnect this device?") },
-            text = {
-                Text(
-                    "Bose Control is running on ${device.name.ifEmpty { device.mac }}. " +
-                            "Disconnecting it also closes the app's connection to the earbuds."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    disconnectTarget = null
-                    deviceAction { DeviceRepository.disconnectSource(device.mac) }
-                }) { Text("Disconnect") }
-            },
-            dismissButton = {
-                TextButton(onClick = { disconnectTarget = null }) { Text("Cancel") }
+        ConfirmLocalDisconnectDialog(
+            device = device,
+            onDismiss = { disconnectTarget = null },
+            onConfirm = {
+                disconnectTarget = null
+                deviceAction { DeviceRepository.disconnectSource(device.mac) }
             },
         )
     }
@@ -146,6 +139,17 @@ fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                TextButton(
+                    onClick = onOpenConnections,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text("All devices")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        AppIcons.ArrowForward, contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
 

@@ -408,7 +408,7 @@ private fun VolumeItem() {
 }
 
 @Composable
-private fun SectionHeader(text: String) {
+fun SectionHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,

@@ -303,23 +303,29 @@ object DeviceRepository {
      * keeps a refresh down to one [4.4] plus one [5.1].
      */
     private suspend fun fillDeviceNames(conn: BmapConnection) {
-        val missing = _state.value.pairedDevices.filter { it.name.isEmpty() }
-        if (missing.isEmpty()) return
-        val resolved = missing.mapNotNull { device ->
-            runCatching { conn.deviceInfo(device.mac) }.getOrNull()
-        }.associateBy { it.mac }
-        if (resolved.isEmpty()) return
-        // Re-read state: the list may have changed while we were reading.
-        _state.value = _state.value.copy(
-            pairedDevices = _state.value.pairedDevices.map { device ->
-                resolved[device.mac]?.let {
-                    device.copy(
-                        name = it.name, isLocalDevice = it.isLocalDevice,
-                        isBoseProduct = it.isBoseProduct,
+        // Connected first: the transport serialises requests, so with six known
+        // devices the tail takes a couple of seconds. The Home section only
+        // shows connected ones, and until a name lands the row reads as a raw
+        // MAC — so resolve those two before the four nobody is looking at.
+        val missing = _state.value.pairedDevices
+            .filter { it.name.isEmpty() }
+            .sortedByDescending { it.connected }
+        // Applied one at a time rather than in a batch at the end, so the two
+        // rows on Home stop reading as raw MACs as soon as their own [4.5]
+        // lands instead of waiting for the whole list.
+        for (target in missing) {
+            val info = runCatching { conn.deviceInfo(target.mac) }.getOrNull() ?: continue
+            // Re-read state each pass: the list can change while we read.
+            _state.value = _state.value.copy(
+                pairedDevices = _state.value.pairedDevices.map { device ->
+                    if (device.mac != info.mac) device
+                    else device.copy(
+                        name = info.name, isLocalDevice = info.isLocalDevice,
+                        isBoseProduct = info.isBoseProduct,
                     )
-                } ?: device
-            }
-        )
+                }
+            )
+        }
     }
 
     private suspend fun loadDevices(conn: BmapConnection) {
