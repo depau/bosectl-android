@@ -119,19 +119,25 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
         setGet(Addr.AUDIO_SETTINGS, buildAudioSettings(settings))
     }
 
-    /** Write a user profile slot (4-10). Presets reject this with Runtime error 8. */
+    /**
+     * Write a user profile slot (4-10). Presets reject this with Runtime error 8.
+     *
+     * windBlock is deliberately not a parameter: verified on device, the QC Ultra
+     * Earbuds reject *any* ModeConfig write carrying windBlock=1 with Runtime
+     * error 8, then report the stored profile as windBlock=1 regardless. So the
+     * only writable value is 0, and the field is not user-controllable.
+     */
     suspend fun writeMode(
         slot: Int,
         name: String,
         promptId: Int,
         cncLevel: Int,
         spatial: Spatial,
-        windBlock: Boolean,
         ancToggle: Boolean = true,
     ) {
         val payload = buildModeConfig(
             modeIdx = slot, name = name, promptId = promptId, cncLevel = cncLevel,
-            spatial = spatial, windBlock = windBlock, ancToggle = ancToggle,
+            spatial = spatial, windBlock = false, ancToggle = ancToggle,
         )
         // The device replies with multiple frames; a STATUS echo means success.
         val responses =
@@ -141,10 +147,9 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
             throw BmapDeviceException("Mode config write failed", -1)
     }
 
-    /** Reset a user slot back to an empty "None" profile. */
+    /** Reset a user slot back to an empty "None" profile, as the device ships it. */
     suspend fun deleteMode(slot: Int) {
-        writeMode(slot, "None", promptId = 0, cncLevel = 0, spatial = Spatial.OFF,
-            windBlock = false, ancToggle = false)
+        writeMode(slot, "None", promptId = 0, cncLevel = 10, spatial = Spatial.OFF)
     }
 
     suspend fun setEq(bass: Int, mid: Int, treble: Int) {

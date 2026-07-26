@@ -113,7 +113,19 @@ fun ProfileEditorSheet(mode: ModeConfig?, slot: Int, onDismiss: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Text("Icon and voice prompt", style = MaterialTheme.typography.titleSmall)
+            Column {
+                Text("Icon and voice prompt", style = MaterialTheme.typography.titleSmall)
+                // The icon doubles as the announcement, which isn't obvious from
+                // a grid of glyphs — spell out what the earbuds will say.
+                Text(
+                    Prompt.fromId(promptId).let {
+                        if (it == null || it == Prompt.NONE) "Switching to this mode is silent"
+                        else "Announced as \"${it.label}\""
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             LazyHorizontalGrid(
                 rows = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxWidth().height(112.dp),

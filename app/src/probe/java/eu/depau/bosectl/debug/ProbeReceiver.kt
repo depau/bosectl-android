@@ -25,6 +25,10 @@ class ProbeReceiver : BroadcastReceiver() {
                     when (mode) {
                         "quick" -> quickProbe(label)
                         "settings" -> settingsProbe(label)
+                        "write" -> writeProbe(label)
+                        "variants" -> writeVariants(label)
+                        "prompts" -> promptSweep(label)
+                        "roundtrip" -> roundTrip(label)
                         else -> probe()
                     }
                 }
@@ -34,6 +38,116 @@ class ProbeReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }.start()
+    }
+
+    /** Attempt a profile write into the first free slot and read it back. */
+    private suspend fun writeProbe(label: String) {
+        DeviceRepository.withDevice { conn ->
+            val before = conn.snapshot()
+            before.modes.forEach { Log.i(TAG, "[$label] before: $it") }
+            val slot = before.modes.firstOrNull { it.isFreeSlot }?.modeIdx
+            if (slot == null) {
+                Log.i(TAG, "[$label] no free slot")
+                return@withDevice
+            }
+            Log.i(TAG, "[$label] writing slot $slot")
+            runCatching {
+                conn.writeMode(
+                    slot = slot, name = "ProbeTest", promptId = 12,
+                    cncLevel = 5, spatial = eu.depau.bosectl.bmap.Spatial.OFF,
+                )
+            }.onSuccess { Log.i(TAG, "[$label] write returned OK") }
+                .onFailure { Log.e(TAG, "[$label] write threw: $it") }
+            conn.snapshot().modes.filter { it.modeIdx == slot }
+                .forEach { Log.i(TAG, "[$label] after: $it") }
+        }
+    }
+
+    /** Bisect which ModeConfig field the firmware objects to. Free slots only. */
+    private suspend fun writeVariants(label: String) {
+        DeviceRepository.withDevice { conn ->
+            val free = conn.snapshot().modes.filter { it.isFreeSlot }.map { it.modeIdx }
+            Log.i(TAG, "[$label] free slots: $free")
+            val slot = free.firstOrNull() ?: return@withDevice
+
+            // name, promptId, cnc, autoCnc, spatial, wind, anc
+            val variants = listOf(
+                Triple("baseline mirrors slot as reported", slot,
+                    byteArrayOf(0, 0, 10, 0, 0, 1, 1)),
+                Triple("named, otherwise as reported", slot,
+                    byteArrayOf(1, 0, 10, 0, 0, 1, 1)),
+                Triple("wind off", slot, byteArrayOf(1, 0, 10, 0, 0, 0, 1)),
+                Triple("cnc 5", slot, byteArrayOf(1, 0, 5, 0, 0, 1, 1)),
+                Triple("prompt COMMUTE(7)", slot, byteArrayOf(1, 7, 10, 0, 0, 1, 1)),
+                Triple("prompt MUSIC(12)", slot, byteArrayOf(1, 12, 10, 0, 0, 1, 1)),
+                Triple("second free slot", free.getOrElse(1) { slot },
+                    byteArrayOf(1, 0, 10, 0, 0, 1, 1)),
+            )
+            for ((desc, target, v) in variants) {
+                val name = if (v[0].toInt() == 0) "None" else "ProbeTest"
+                val payload = byteArrayOf(target.toByte(), 0, v[1]) +
+                    eu.depau.bosectl.bmap.encodeModeName(name) +
+                    byteArrayOf(v[2], v[3], v[4], v[5], v[6])
+                val result = runCatching {
+                    conn.raw(bmapPacket(31, 6, Op.SETGET, payload), drain = true)
+                }.getOrElse { listOf<eu.depau.bosectl.bmap.BmapPacket>() }
+                Log.i(TAG, "[$label] $desc (slot $target) -> " +
+                    (result.joinToString { "${'$'}it" }.ifEmpty { "no reply" }))
+            }
+        }
+    }
+
+    /** Which voice-prompt ids does the firmware accept? Writes to a free slot. */
+    private suspend fun promptSweep(label: String) {
+        DeviceRepository.withDevice { conn ->
+            val slot = conn.snapshot().modes.firstOrNull { it.isFreeSlot }?.modeIdx
+            if (slot == null) {
+                Log.i(TAG, "[$label] no free slot")
+                return@withDevice
+            }
+            val accepted = mutableListOf<Int>()
+            for (prompt in 0..36) {
+                val payload = byteArrayOf(slot.toByte(), 0, prompt.toByte()) +
+                    eu.depau.bosectl.bmap.encodeModeName("P$prompt") +
+                    byteArrayOf(10, 0, 0, 0, 1)   // wind MUST be 0 or Runtime 8
+                val ok = runCatching {
+                    conn.raw(bmapPacket(31, 6, Op.SETGET, payload), drain = true)
+                }.getOrDefault(emptyList()).any { it.op == Op.STATUS }
+                if (ok) accepted.add(prompt)
+            }
+            Log.i(TAG, "[$label] accepted prompt ids: $accepted")
+            // Put the slot back the way it was found.
+            val restore = byteArrayOf(slot.toByte(), 0, 0) +
+                eu.depau.bosectl.bmap.encodeModeName("None") +
+                byteArrayOf(10, 0, 0, 0, 1)
+            conn.raw(bmapPacket(31, 6, Op.SETGET, restore), drain = true)
+            conn.snapshot().modes.filter { it.modeIdx == slot }
+                .forEach { Log.i(TAG, "[$label] restored: $it") }
+        }
+    }
+
+    /** Exercise the real app path: create a profile, read back, delete, verify. */
+    private suspend fun roundTrip(label: String) {
+        DeviceRepository.withDevice { conn ->
+            // Clear any leftovers from earlier probing first.
+            conn.snapshot().modes.filter { it.name == "ProbeTest" || it.name.startsWith("P") &&
+                it.name.drop(1).toIntOrNull() != null }.forEach {
+                Log.i(TAG, "[$label] clearing stale ${'$'}{it.name} in slot ${'$'}{it.modeIdx}")
+                runCatching { conn.deleteMode(it.modeIdx) }
+            }
+            val slot = conn.snapshot().modes.firstOrNull { it.isFreeSlot }?.modeIdx ?: return@withDevice
+            runCatching {
+                conn.writeMode(slot, "Roundtrip", promptId = 12, cncLevel = 5, spatial = eu.depau.bosectl.bmap.Spatial.STILL)
+            }.onSuccess { Log.i(TAG, "[$label] create OK in slot ${'$'}slot") }
+                .onFailure { Log.e(TAG, "[$label] create FAILED: ${'$'}it") }
+            conn.snapshot().modes.filter { it.modeIdx == slot }
+                .forEach { Log.i(TAG, "[$label] created: ${'$'}it") }
+            runCatching { conn.deleteMode(slot) }
+                .onSuccess { Log.i(TAG, "[$label] delete OK") }
+                .onFailure { Log.e(TAG, "[$label] delete FAILED: ${'$'}it") }
+            conn.snapshot().modes.filter { it.modeIdx == slot }
+                .forEach { Log.i(TAG, "[$label] after delete: ${'$'}it") }
+        }
     }
 
     /** Settings GetAll only — the fast way to diff after a stock-app toggle. */

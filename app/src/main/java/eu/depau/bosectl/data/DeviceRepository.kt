@@ -301,9 +301,7 @@ object DeviceRepository {
     suspend fun saveProfile(
         slot: Int, name: String, promptId: Int, cncLevel: Int, spatial: Spatial,
     ) = action { conn ->
-        // windBlock=true matches what the official app writes for custom
-        // profiles; the setting is ignored by the earbuds firmware anyway.
-        conn.writeMode(slot, name, promptId, cncLevel, spatial, windBlock = true)
+        conn.writeMode(slot, name, promptId, cncLevel, spatial)
         refresh()
     }
 
