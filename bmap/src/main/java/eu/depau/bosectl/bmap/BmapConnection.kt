@@ -282,13 +282,13 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
         deviceWrite(Addr.DEV_DISCONNECT, macToBytes(mac))
 
     /**
-     * Remove a device from the earbuds' pairing list. Not undoable from here:
-     * getting it back means re-pairing from the device itself.
+     * Remove a device from the earbuds' pairing list. Verified on hardware
+     * against a stale entry: the other devices and both live connections were
+     * untouched. Answers PROCESSING with an empty payload, then RESULT with the
+     * MAC.
      *
-     * ponytail: [4.3] START is unverified on hardware. Its GET answers error 5
-     * exactly as [4.2]'s does and [4.2]'s START works, so this very likely does
-     * too — confirm before relying on it, and record the result in
-     * docs/PROTOCOL.md §14.
+     * Not undoable from BMAP — getting the device back means re-pairing from
+     * the device itself, so callers must confirm first.
      */
     suspend fun forgetDevice(mac: String) = deviceWrite(Addr.DEV_FORGET, macToBytes(mac))
 

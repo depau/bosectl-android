@@ -421,7 +421,7 @@ GET sweep of block 4:
 | `[4.0]`                                   | FblockInfo                                                         | `"1.1.0"`                                              |
 | `[4.1]`                                   | Connect                                                            | STATUS `000003`                                        |
 | `[4.2]`                                   | Disconnect                                                         | error 5 — GET is not a valid operator, **START works** |
-| `[4.3]`                                   | RemoveDevice                                                       | error 5 — START presumably works, untested             |
+| `[4.3]`                                   | RemoveDevice                                                       | error 5 — GET is the wrong operator, **START works**   |
 | `[4.4]`                                   | ListDevices                                                        | STATUS, see below                                      |
 | `[4.5]`                                   | Info                                                               | error 6 without a payload; takes a MAC                 |
 | `[4.6]`                                   | ExtendedInfo                                                       | error 6 without a payload; takes a MAC                 |
@@ -492,7 +492,7 @@ connected phone reads `0f 0f`; a known-but-idle device `0f 00`. The trailing
 `5414` was constant across all six devices and is not parsed by the official
 app.
 
-### Connect and disconnect are unauthenticated STARTs
+### Connect, disconnect and forget are unauthenticated STARTs
 
 ```
 [4.2] START  [mac(6)]
@@ -501,6 +501,10 @@ app.
 
 [4.1] START  [0x00, mac(6)]
   -> [4.1] PROCESSING  [mac(6)]
+
+[4.3] START  [mac(6)]
+  -> [4.3] PROCESSING  (empty payload)
+  -> [4.3] RESULT      [mac(6)]
 ```
 
 `[4.1]` returns no RESULT within a few seconds — poll `[4.4]` instead. Verified
@@ -508,11 +512,17 @@ end to end: with the phone disconnected from the phone's own side, `[4.1]`
 brought it back and the `[4.4]` mask went `01` → `03` in about four seconds.
 `[4.2]` on the phone dropped it and the mask went `03` → `02`.
 
+`[4.3]` RemoveDevice was verified against a stale entry (an old CSR dongle MAC
+that had been sitting in the list unused): the entry disappeared from `[4.4]`,
+the other five devices were untouched, and both live connections kept playing.
+Note the asymmetry with `[4.2]` — its PROCESSING frame carries **no payload**,
+while the RESULT echoes the MAC. Removal is not undoable from BMAP: getting the
+device back means re-pairing from the device itself.
+
 `[4.1]` has two further payload forms in the official app, neither needed here:
 `[0x01, utf8 name]` and `[(productType << 7) | 0x10, mac(6), localMac(6)]` for
-Bose-to-Bose. `[4.3]` RemoveDevice takes a bare `mac(6)` and `[4.7]`
-ClearDeviceList takes none; both are `ponytail:` **untested — they destroy
-pairings.**
+Bose-to-Bose. `[4.7]` ClearDeviceList takes no payload and is `ponytail:`
+**untested — it would wipe every pairing at once.**
 
 ### Error 5 on a GET does not mean "auth"
 
