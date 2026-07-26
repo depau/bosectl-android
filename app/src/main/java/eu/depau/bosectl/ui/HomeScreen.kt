@@ -78,7 +78,6 @@ fun HomeScreen(
 
     DeviceSheetHost(
         mac = sheetMac,
-        pending = emptySet(),
         onConnect = { deviceAction { DeviceRepository.connectSource(it.mac) } },
         onDisconnect = ::disconnect,
         onDismiss = { sheetMac = null },
@@ -155,6 +154,7 @@ fun HomeScreen(
                             ConnectedDeviceRow(
                                 device = device,
                                 playing = device.mac == state.activeSourceMac,
+                                pending = device.mac in state.pendingDevices,
                                 onClick = { sheetMac = device.mac },
                                 onDisconnect = { disconnect(device) },
                             )
@@ -594,6 +594,7 @@ private fun cncLevelName(displayLevel: Int) = when (displayLevel) {
 private fun ConnectedDeviceRow(
     device: PairedDevice,
     playing: Boolean,
+    pending: Boolean,
     onClick: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -614,8 +615,16 @@ private fun ConnectedDeviceRow(
                 )
             }
         }
-        IconButton(onClick = onDisconnect) {
-            Icon(AppIcons.LinkOff, contentDescription = "Disconnect $label")
+        if (pending) {
+            // Same 48dp footprint as the IconButton it stands in for, so the
+            // row keeps its height and the name doesn't shift.
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        } else {
+            IconButton(onClick = onDisconnect) {
+                Icon(AppIcons.LinkOff, contentDescription = "Disconnect $label")
+            }
         }
     }
 }

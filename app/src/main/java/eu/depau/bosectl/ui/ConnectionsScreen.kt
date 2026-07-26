@@ -2,6 +2,7 @@ package eu.depau.bosectl.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,16 +39,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import eu.depau.bosectl.bmap.DeviceExtendedInfo
 import eu.depau.bosectl.bmap.DeviceProfiles
 import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.data.DeviceRepository
-import kotlinx.coroutines.delay
 
-/** How long to keep showing progress for a connect that never lands. */
-private const val CONNECT_TIMEOUT_MS = 20_000L
+/**
+ * Footprint of an M3 Switch. The spinner that replaces one during a
+ * connect/disconnect is centred in this box so the row keeps its geometry.
+ */
+private val SwitchSize = DpSize(52.dp, 32.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,9 +59,6 @@ fun ConnectionsScreen(onBack: () -> Unit) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
     var sheetMac by remember { mutableStateOf<String?>(null) }
     var confirmLocalDisconnect by remember { mutableStateOf<PairedDevice?>(null) }
-    // [4.1] acks with PROCESSING and the link comes up seconds later, so the
-    // only real signal is the device turning up connected in a [4.4] push.
-    var pending by remember { mutableStateOf(emptySet<String>()) }
     var multipoint by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(state.connected) {
@@ -66,20 +67,7 @@ fun ConnectionsScreen(onBack: () -> Unit) {
             else runCatching { DeviceRepository.withDevice { it.multipoint() } }.getOrNull()
     }
 
-    LaunchedEffect(state.pairedDevices) {
-        pending = pending.filterTo(mutableSetOf()) { mac ->
-            state.pairedDevices.none { it.mac == mac && it.connected }
-        }
-    }
-
-    LaunchedEffect(pending) {
-        if (pending.isEmpty()) return@LaunchedEffect
-        delay(CONNECT_TIMEOUT_MS)
-        pending = emptySet()
-    }
-
     fun connect(device: PairedDevice) {
-        pending = pending + device.mac
         deviceAction { DeviceRepository.connectSource(device.mac) }
     }
 
@@ -154,7 +142,7 @@ fun ConnectionsScreen(onBack: () -> Unit) {
                 DeviceRow(
                     device = device,
                     playing = device.mac == state.activeSourceMac,
-                    pending = false,
+                    pending = device.mac in state.pendingDevices,
                     onClick = { sheetMac = device.mac },
                     onToggle = { disconnect(device) },
                     modifier = Modifier.animateItem(),
@@ -167,7 +155,7 @@ fun ConnectionsScreen(onBack: () -> Unit) {
                 DeviceRow(
                     device = device,
                     playing = false,
-                    pending = device.mac in pending,
+                    pending = device.mac in state.pendingDevices,
                     onClick = { sheetMac = device.mac },
                     onToggle = { connect(device) },
                     modifier = Modifier.animateItem(),
@@ -188,7 +176,6 @@ fun ConnectionsScreen(onBack: () -> Unit) {
 
     DeviceSheetHost(
         mac = sheetMac,
-        pending = pending,
         onConnect = ::connect,
         onDisconnect = ::disconnect,
         onDismiss = { sheetMac = null },
@@ -220,14 +207,18 @@ private fun DeviceRow(
         supportingContent = deviceTags(device, playing)?.let { { Text(it) } },
         leadingContent = { Icon(AppIcons.Bluetooth, contentDescription = null) },
         trailingContent = {
-            // Optimistically on while a connect is in flight, and locked until
-            // the [4.4] push settles it — flipping back to off mid-connect
-            // would read as failure.
-            Switch(
-                checked = device.connected || pending,
-                enabled = !pending,
-                onCheckedChange = { onToggle() },
-            )
+            if (pending) {
+                // Occupies exactly the switch's footprint, so the row doesn't
+                // shift when the control swaps out and back.
+                Box(
+                    Modifier.size(SwitchSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            } else {
+                Switch(checked = device.connected, onCheckedChange = { onToggle() })
+            }
         },
         modifier = modifier.clickable(onClick = onClick),
     )
@@ -242,7 +233,6 @@ private fun DeviceRow(
 @Composable
 fun DeviceSheetHost(
     mac: String?,
-    pending: Set<String>,
     onConnect: (PairedDevice) -> Unit,
     onDisconnect: (PairedDevice) -> Unit,
     onDismiss: () -> Unit,
@@ -321,23 +311,24 @@ fun DeviceSheetHost(
                 )
             }
 
+            val busy = device.mac in state.pendingDevices
             if (device.connected) {
                 OutlinedButton(
                     onClick = { onDisconnect(device) },
+                    enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Disconnect") }
+                ) {
+                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Disconnect")
+                }
             } else {
-                val busy = device.mac in pending
                 Button(
                     onClick = { onConnect(device) },
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    if (busy) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("Connect")
-                    }
+                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Connect")
                 }
             }
             TextButton(onClick = { forgetTarget = device }) {

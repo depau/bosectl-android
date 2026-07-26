@@ -42,6 +42,9 @@ private const val TAG = "DeviceRepository"
 private const val POLL_FOREGROUND_MS = 2000L
 private const val POLL_BACKGROUND_MS = 10000L
 
+/** Give up spinning on a connect/disconnect that never reports back. */
+private const val DEVICE_ACTION_TIMEOUT_MS = 20_000L
+
 data class BoseState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -57,6 +60,12 @@ data class BoseState(
     val pairedDevices: List<PairedDevice> = emptyList(),
     /** MAC of the device currently holding audio, from [5.1]. */
     val activeSourceMac: String? = null,
+    /**
+     * Devices with a connect or disconnect in flight, mapped to the state we
+     * asked for. [4.1] never sends a RESULT and [4.2]'s link takes a moment to
+     * drop, so "done" means the device reporting the target state in [4.4].
+     */
+    val pendingDevices: Map<String, Boolean> = emptyMap(),
     val lastError: String? = null,
 ) {
     val starredModes: List<ModeConfig>
@@ -300,8 +309,31 @@ object DeviceRepository {
      * [onUnsolicited]). Names for unseen MACs arrive later via [fillDeviceNames].
      */
     private fun mergeDeviceList(entries: List<Pair<String, Boolean>>) {
+        val merged = mergePairedDevices(_state.value.pairedDevices, entries)
+        // A pending action is finished the moment the device reports the state
+        // it was asked for — this frame is the acknowledgement.
+        val stillPending = _state.value.pendingDevices.filterNot { (mac, target) ->
+            merged.any { it.mac == mac && it.connected == target }
+        }
+        _state.value = _state.value.copy(pairedDevices = merged, pendingDevices = stillPending)
+    }
+
+    private fun markPending(mac: String, target: Boolean) {
         _state.value = _state.value.copy(
-            pairedDevices = mergePairedDevices(_state.value.pairedDevices, entries)
+            pendingDevices = _state.value.pendingDevices + (mac to target)
+        )
+        // Backstop: a connect to a device that never answers would otherwise
+        // spin forever, since there is no failure frame to react to.
+        scope.launch {
+            delay(DEVICE_ACTION_TIMEOUT_MS)
+            clearPending(mac)
+        }
+    }
+
+    private fun clearPending(mac: String) {
+        if (mac !in _state.value.pendingDevices) return
+        _state.value = _state.value.copy(
+            pendingDevices = _state.value.pendingDevices - mac
         )
     }
 
@@ -348,7 +380,13 @@ object DeviceRepository {
     suspend fun refreshDevices() = action { loadDevices(it) }
 
     suspend fun disconnectSource(mac: String) = action { conn ->
-        conn.disconnectDevice(mac)
+        markPending(mac, target = false)
+        try {
+            conn.disconnectDevice(mac)
+        } catch (e: Exception) {
+            clearPending(mac)
+            throw e
+        }
         loadDevices(conn)
     }
 
@@ -356,7 +394,15 @@ object DeviceRepository {
      * [4.1] acks with PROCESSING and the link comes up a few seconds later, so
      * there is nothing useful to read here — the [4.4] push reports the result.
      */
-    suspend fun connectSource(mac: String) = action { conn -> conn.connectDevice(mac) }
+    suspend fun connectSource(mac: String) = action { conn ->
+        markPending(mac, target = true)
+        try {
+            conn.connectDevice(mac)
+        } catch (e: Exception) {
+            clearPending(mac)
+            throw e
+        }
+    }
 
     suspend fun forgetSource(mac: String) = action { conn ->
         conn.forgetDevice(mac)
