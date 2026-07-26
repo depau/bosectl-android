@@ -52,6 +52,15 @@ test-only, so manual installs need `adb install -r -t`.
   it. Device work runs on the repository scope (`DeviceRepository.runAsync`), not
   a composition scope, so navigating away can't cancel an in-flight request.
 
+Two interchangeable link layers sit under `BmapTransport`: `RfcommTransport`
+(classic, channel 2) and `GattTransport` (BLE, service `febe`). They carry the
+same packets — the only difference is BLE's one-byte segmentation header
+(`BleFraming.kt`) — so nothing above the interface cares which is in use.
+`data/LinkLayer.kt` holds the choice: `linkOrder()` decides, `openTransport()`
+builds. **Never let the app initiate a classic connection**: RFCOMM to an idle
+device steals the audio from whatever is playing, so `AUTO` only reaches for
+classic when the link is already up, and LE otherwise.
+
 Presentation stays out of `:bmap`, and `:app` never hand-builds packets.
 
 ## Protocol rules

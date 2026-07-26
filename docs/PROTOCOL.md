@@ -583,7 +583,7 @@ further payload guessing.
 
 ---
 
-## 15. BMAP over BLE/GATT — a second transport, gated on LE bonding
+## 15. BMAP over BLE/GATT — a second transport, gated on link encryption
 
 BMAP is not RFCOMM-only. The earbuds expose the same protocol over GATT, and the
 official SDK carries three transports side by side (`com/bose/bmap/ble/`
@@ -725,7 +725,6 @@ The LE link also survived the classic disconnect it triggered, so a client does
 not need to re-establish GATT when the audio link comes and goes.
 
 ### Reproducing: the BLE probe
-
 The `probe` flavor carries a GATT client that does the above (`debug/BleProbe.kt`):
 
 ```bash

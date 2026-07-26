@@ -1,21 +1,23 @@
 package eu.depau.bosectl.data
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
+import eu.depau.bosectl.bmap.BmapTransport
 import androidx.datastore.preferences.core.edit
 import androidx.glance.appwidget.updateAll
 import eu.depau.bosectl.bmap.AudioSettings
 import eu.depau.bosectl.bmap.BatteryStatus
+import eu.depau.bosectl.bmap.BoseAdvertisement
 import eu.depau.bosectl.bmap.BmapConnection
 import eu.depau.bosectl.bmap.BmapException
 import eu.depau.bosectl.bmap.Favorites
 import eu.depau.bosectl.bmap.ModeConfig
 import eu.depau.bosectl.bmap.Op
 import eu.depau.bosectl.bmap.PairedDevice
-import eu.depau.bosectl.bmap.RfcommTransport
 import eu.depau.bosectl.bmap.Spatial
 import eu.depau.bosectl.bmap.parseActiveSource
 import eu.depau.bosectl.bmap.parseAudioSettings
@@ -60,6 +62,12 @@ data class BoseState(
     val pairedDevices: List<PairedDevice> = emptyList(),
     /** MAC of the device currently holding audio, from [5.1]. */
     val activeSourceMac: String? = null,
+    /** Which transport the live connection is using, null when disconnected. */
+    val link: LinkLayer? = null,
+    /** When a BLE advertisement was last seen, epoch millis; null if never. */
+    val lastSeenAt: Long? = null,
+    /** The advertisement's "available to connect" bit at [lastSeenAt]. */
+    val lastSeenAvailable: Boolean = false,
     /**
      * Devices with a connect or disconnect in flight, mapped to the state we
      * asked for. [4.1] never sends a RESULT and [4.2]'s link takes a moment to
@@ -121,6 +129,37 @@ object DeviceRepository {
         _state.value = BoseState()
     }
 
+    suspend fun linkPreference(): LinkPreference =
+        LinkPreference.fromId(context.dataStore.data.first()[Prefs.LINK_LAYER])
+
+    suspend fun setLinkPreference(preference: LinkPreference) {
+        context.dataStore.edit { it[Prefs.LINK_LAYER] = preference.id }
+        disconnect()
+    }
+
+    /**
+     * Open the first transport that works. Both carry the same protocol, so the
+     * only visible difference is [BoseState.link] — and that LE keeps working
+     * when the earbuds are playing to another device.
+     */
+    private suspend fun openFirstWorkingTransport(
+        device: BluetoothDevice,
+    ): Pair<BmapTransport, LinkLayer> {
+        val order = linkOrder(linkPreference(), classicLinkUp = isAclUp())
+        var lastError: Exception? = null
+        for (link in order) {
+            try {
+                val transport = openTransport(link, context, device)
+                Log.i(TAG, "Connected to ${device.address} over $link")
+                return transport to link
+            } catch (e: Exception) {
+                Log.w(TAG, "$link transport failed: ${e.message}")
+                lastError = e
+            }
+        }
+        throw lastError ?: BmapException("No usable link to ${device.address}")
+    }
+
     /** Connect if not already connected. Throws BmapException on failure. */
     suspend fun ensureConnected(): BmapConnection = connectMutex.withLock {
         connection?.takeIf { it.isConnected }?.let { return it }
@@ -135,7 +174,7 @@ object DeviceRepository {
 
         _state.value = _state.value.copy(busy = true, lastError = null)
         try {
-            val transport = RfcommTransport.connect(device)
+            val (transport, link) = openFirstWorkingTransport(device)
             val conn = BmapConnection(transport)
             connection = conn
             unsolicitedJob?.cancel()
@@ -150,7 +189,7 @@ object DeviceRepository {
                 .onFailure { Log.w(TAG, "Notification subscribe failed", it) }
                 .getOrDefault(emptyList())
                 .isNotEmpty()
-            _state.value = _state.value.copy(connected = true, busy = false)
+            _state.value = _state.value.copy(connected = true, busy = false, link = link)
             // Push is the mechanism; polling only covers firmware that refuses
             // the subscription.
             if (!notificationsActive) startPolling()
@@ -170,7 +209,7 @@ object DeviceRepository {
         unsolicitedJob = null
         connection?.close()
         connection = null
-        _state.value = _state.value.copy(connected = false, busy = false)
+        _state.value = _state.value.copy(connected = false, busy = false, link = null)
         scope.launch { persistWidgetCache() }
     }
 
@@ -193,16 +232,85 @@ object DeviceRepository {
     fun onDeviceDisappeared() = disconnect()
 
     /**
-     * Connect + refresh only if the phone currently has a Bluetooth link to the
-     * earbuds — app launch must not spin on "connecting" when they're away.
+     * Connect + refresh only if the earbuds are actually reachable — app launch
+     * must not spin on "connecting" when they're away.
+     *
+     * A classic link means RFCOMM is available. Failing that, a *recent BLE
+     * sighting* means the LE transport is worth a try even with no classic link,
+     * which is how the app can show state while the earbuds play to another
+     * device. With neither, don't touch the radio.
      */
     fun autoConnectIfAvailable() = runAsync {
         if (state.value.connected) {
             refresh()
-        } else if (isAclUp()) {
+        } else if (isAclUp() || isNearby()) {
             ensureConnected()
             refresh()
         }
+    }
+
+    /** Was a matching advertisement seen recently enough to bother connecting? */
+    private suspend fun isNearby(): Boolean {
+        if (linkPreference() == LinkPreference.CLASSIC_ONLY) return false
+        val seen = context.dataStore.data.first()[Prefs.LAST_SEEN_AT] ?: return false
+        return System.currentTimeMillis() - seen < PRESENCE_FRESH_MS
+    }
+
+    /**
+     * A batch of Bose advertisements from the system scan (see [PresenceScanner]).
+     * Runs from a broadcast receiver, so [onDone] releases its wake lock.
+     */
+    fun onAdvertisementsSeen(
+        sightings: List<Pair<String, BoseAdvertisement>>,
+        onDone: () -> Unit = {},
+    ) {
+        scope.launch {
+            try {
+                val saved = savedDeviceMac() ?: return@launch
+                val prefs = context.dataStore.data.first()
+                val knownProduct = prefs[Prefs.DEVICE_BLE_PRODUCT_ID]
+
+                // An address match is proof. Otherwise fall back to "same model
+                // as ours", which is all the advertisement offers: the rotating
+                // address is Bose's own resolvable scheme, not a standard RPA we
+                // could resolve with an IRK.
+                // ponytail: another set of the same model in range would count as
+                // ours. Harmless for a presence hint — it only ever causes an LE
+                // connect attempt that then fails.
+                val exact = sightings.firstOrNull { it.first.equals(saved, ignoreCase = true) }
+                val match = exact
+                    ?: sightings.firstOrNull { it.second.bleProductId == knownProduct }
+                    ?: return@launch
+
+                context.dataStore.edit {
+                    it[Prefs.LAST_SEEN_AT] = System.currentTimeMillis()
+                    it[Prefs.LAST_SEEN_AVAILABLE] = match.second.availableToConnect
+                    if (exact != null) it[Prefs.DEVICE_BLE_PRODUCT_ID] = exact.second.bleProductId
+                }
+                _state.value = _state.value.copy(
+                    lastSeenAt = System.currentTimeMillis(),
+                    lastSeenAvailable = match.second.availableToConnect,
+                )
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    /** Re-arm the system scan if the user turned nearby detection on. */
+    fun startPresenceScanIfEnabled() = runAsync {
+        if (context.dataStore.data.first()[Prefs.PRESENCE_ENABLED] == true) {
+            PresenceScanner.start(context)
+        }
+    }
+
+    /** Load the persisted sighting so a freshly started UI isn't blank. */
+    fun restorePresence() = runAsync {
+        val prefs = context.dataStore.data.first()
+        _state.value = _state.value.copy(
+            lastSeenAt = prefs[Prefs.LAST_SEEN_AT],
+            lastSeenAvailable = prefs[Prefs.LAST_SEEN_AVAILABLE] ?: false,
+        )
     }
 
     @SuppressLint("MissingPermission")

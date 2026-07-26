@@ -54,6 +54,7 @@ import eu.depau.bosectl.bmap.ModeConfig
 import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.bmap.Spatial
 import eu.depau.bosectl.data.DeviceRepository
+import eu.depau.bosectl.data.PRESENCE_FRESH_MS
 
 /** Device work runs on the repository scope: leaving the screen can't cancel it. */
 fun deviceAction(block: suspend () -> Unit) = DeviceRepository.runAsync(block)
@@ -115,9 +116,12 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (!state.connected) {
-                DisconnectedCard(busy = state.busy, error = state.lastError) {
-                    DeviceRepository.onDeviceAppeared()
-                }
+                DisconnectedCard(
+                    busy = state.busy,
+                    error = state.lastError,
+                    lastSeenAt = state.lastSeenAt,
+                    lastSeenAvailable = state.lastSeenAvailable,
+                ) { DeviceRepository.onDeviceAppeared() }
             } else if (state.lastError != null) {
                 Text(
                     state.lastError!!,
@@ -305,11 +309,32 @@ private fun HeaderRow(
     }
 }
 
+/**
+ * Nearby detection turns "Not connected" into something actionable: the earbuds
+ * advertise continuously, so a recent sighting means connecting is worth a try
+ * even with no audio link (see `docs/PROTOCOL.md` §15).
+ */
+private fun nearbyLabel(lastSeenAt: Long?, available: Boolean): String? {
+    if (lastSeenAt == null) return null
+    val age = System.currentTimeMillis() - lastSeenAt
+    if (age > PRESENCE_FRESH_MS) {
+        val minutes = age / 60_000
+        return when {
+            minutes < 60 -> "Last seen $minutes min ago"
+            minutes < 60 * 24 -> "Last seen ${minutes / 60} h ago"
+            else -> "Not seen recently"
+        }
+    }
+    return if (available) "Nearby, available to connect" else "Nearby, connected elsewhere"
+}
+
 @Composable
 fun DisconnectedCard(
     busy: Boolean,
     error: String?,
     modifier: Modifier = Modifier,
+    lastSeenAt: Long? = null,
+    lastSeenAvailable: Boolean = false,
     onRetry: () -> Unit,
 ) {
     Card(
@@ -329,6 +354,12 @@ fun DisconnectedCard(
             } else {
                 Icon(AppIcons.BluetoothDisabled, contentDescription = null)
                 Text("Not connected", style = MaterialTheme.typography.titleMedium)
+                nearbyLabel(lastSeenAt, lastSeenAvailable)?.let {
+                    Text(
+                        it, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 error?.let {
                     Text(
                         it, style = MaterialTheme.typography.bodySmall,

@@ -1,6 +1,9 @@
 package eu.depau.bosectl.ui
 
+import android.Manifest
 import android.media.AudioManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,7 +51,14 @@ import eu.depau.bosectl.bmap.BmapAuthException
 import eu.depau.bosectl.bmap.ButtonMapping
 import eu.depau.bosectl.bmap.Sidetone
 import eu.depau.bosectl.bmap.VOICE_LANGUAGES
+import androidx.datastore.preferences.core.edit
 import eu.depau.bosectl.data.DeviceRepository
+import eu.depau.bosectl.data.LinkLayer
+import eu.depau.bosectl.data.LinkPreference
+import eu.depau.bosectl.data.PresenceScanner
+import eu.depau.bosectl.data.Prefs
+import eu.depau.bosectl.data.dataStore
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 private data class SettingsSnapshot(
@@ -270,6 +280,12 @@ fun SettingsScreen(
                 )
             }
 
+            // Outside the connected block on purpose: choosing how to connect,
+            // and whether to watch for the earbuds, has to work while away.
+            SectionHeader("Connection")
+            LinkLayerItem(activeLink = state.link)
+            NearbyDetectionItem()
+
             HorizontalDivider()
             ListItem(
                 headlineContent = { Text("Change device") },
@@ -399,6 +415,74 @@ private fun VolumeItem() {
             valueRange = 0f..maxVolume.toFloat(),
             steps = (maxVolume - 1).coerceAtLeast(0),
         )
+    }
+}
+
+/**
+ * Which link layer carries BMAP. Both work; LE additionally works when the
+ * earbuds are playing to another device (see `docs/PROTOCOL.md` §15).
+ */
+@Composable
+private fun LinkLayerItem(activeLink: LinkLayer?) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val preference by remember {
+        context.dataStore.data.map { LinkPreference.fromId(it[Prefs.LINK_LAYER]) }
+    }.collectAsStateWithLifecycle(initialValue = LinkPreference.AUTO)
+
+    val labels = mapOf(
+        LinkPreference.AUTO to "Automatic",
+        LinkPreference.CLASSIC_ONLY to "Bluetooth Classic",
+        LinkPreference.LE_ONLY to "Bluetooth LE",
+    )
+    val inUse = when (activeLink) {
+        LinkLayer.CLASSIC -> " · using Classic"
+        LinkLayer.LE -> " · using LE"
+        null -> ""
+    }
+    RadioPickerItem(
+        title = "Link",
+        subtitle = (labels[preference] ?: "Automatic") + inUse,
+        enabled = true,
+        options = labels,
+        selected = preference,
+        onSelect = { scope.launch { DeviceRepository.setLinkPreference(it) } },
+    )
+}
+
+/** Nearby detection: a system-serviced BLE scan, so no foreground service. */
+@Composable
+private fun NearbyDetectionItem() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var granted by remember { mutableStateOf(PresenceScanner.hasPermission(context)) }
+    val enabled by remember {
+        context.dataStore.data.map { it[Prefs.PRESENCE_ENABLED] == true }
+    }.collectAsStateWithLifecycle(initialValue = false)
+
+    fun setEnabled(on: Boolean) {
+        scope.launch {
+            context.dataStore.edit { it[Prefs.PRESENCE_ENABLED] = on }
+            if (on) PresenceScanner.start(context) else PresenceScanner.stop(context)
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { result ->
+        granted = result
+        if (result) setEnabled(true)
+    }
+
+    SwitchItem(
+        title = "Detect when nearby",
+        subtitle = if (granted) "Show status and connect without holding the audio link"
+        else "Needs the nearby-devices permission",
+        checked = enabled && granted,
+        enabled = true,
+    ) { on ->
+        if (on && !granted) permissionLauncher.launch(Manifest.permission.BLUETOOTH_SCAN)
+        else setEnabled(on)
     }
 }
 

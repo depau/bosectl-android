@@ -3,6 +3,7 @@ package eu.depau.bosectl.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import org.json.JSONArray
@@ -12,6 +13,25 @@ val Context.dataStore by preferencesDataStore(name = "bosectl")
 
 object Prefs {
     val DEVICE_MAC = stringPreferencesKey("device_mac")
+
+    /** Which link layer to carry BMAP over; see [LinkLayer]. */
+    val LINK_LAYER = stringPreferencesKey("link_layer")
+
+    /** Nearby detection: last BLE advertisement seen, epoch millis. */
+    val LAST_SEEN_AT = longPreferencesKey("last_seen_at")
+
+    /** Whether the earbuds said they were available to connect when last seen. */
+    val LAST_SEEN_AVAILABLE = booleanPreferencesKey("last_seen_available")
+
+    /**
+     * BLE product id of the selected device, learned the first time it is seen
+     * advertising its identity address. Lets later sightings be recognised even
+     * when the earbuds advertise a rotating random address.
+     */
+    val DEVICE_BLE_PRODUCT_ID = intPreferencesKey("device_ble_product_id")
+
+    /** Whether the user enabled nearby detection (needs BLUETOOTH_SCAN). */
+    val PRESENCE_ENABLED = booleanPreferencesKey("presence_enabled")
 
     // Widget cache: last known state so the widget renders instantly/offline.
     val CACHE_DEVICE_NAME = stringPreferencesKey("cache_device_name")
