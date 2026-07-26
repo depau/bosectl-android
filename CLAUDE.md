@@ -82,7 +82,17 @@ APK (now 31 MB).
 New icon: add its Symbols name to `tools/fetch-material-symbols.py`, run the
 script, then expose it in `AppIcons`. The script converts the Symbols
 `viewBox="0 -960 960 960"` into an Android-legal viewport via a translate group.
-Never hand-write path data.
+Never hand-write path data. Directional glyphs also go in the script's
+`AUTO_MIRRORED` set so they flip in RTL.
+
+Re-running regenerates every icon; the existing ones must come back
+byte-identical, so `git status` after a run should show only what you added.
+If TLS to `fonts.gstatic.com` fails, run it through a container:
+
+```bash
+CURL="docker run --rm quay.io/curl/curl:latest" \
+    python3 tools/fetch-material-symbols.py
+```
 
 ## Testing
 

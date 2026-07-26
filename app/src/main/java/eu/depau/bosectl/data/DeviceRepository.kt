@@ -63,8 +63,16 @@ data class BoseState(
         get() = modes.filter { favorites?.starred?.contains(it.modeIdx) == true && !it.isFreeSlot }
     val currentMode: ModeConfig?
         get() = modes.firstOrNull { it.modeIdx == currentModeIdx }
+    /**
+     * Connected devices, this one first, then whichever is playing.
+     * [4.4]'s own order is not stable between reads, so imposing one here stops
+     * rows from swapping around underneath the user.
+     */
     val connectedDevices: List<PairedDevice>
-        get() = pairedDevices.filter { it.connected }
+        get() = pairedDevices.filter { it.connected }.sortedWith(
+            compareByDescending<PairedDevice> { it.isLocalDevice }
+                .thenByDescending { it.mac == activeSourceMac }
+        )
 }
 
 /**

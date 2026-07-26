@@ -1,7 +1,13 @@
 package eu.depau.bosectl.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,8 +20,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,6 +33,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -61,6 +67,22 @@ fun HomeScreen(
 ) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
     var disconnectTarget by remember { mutableStateOf<PairedDevice?>(null) }
+    var sheetMac by remember { mutableStateOf<String?>(null) }
+
+    fun disconnect(device: PairedDevice) {
+        // Dropping the phone this app runs on also drops our own BMAP link, so
+        // that one asks first. Every other disconnect stays a single tap.
+        if (device.isLocalDevice) disconnectTarget = device
+        else deviceAction { DeviceRepository.disconnectSource(device.mac) }
+    }
+
+    DeviceSheetHost(
+        mac = sheetMac,
+        pending = emptySet(),
+        onConnect = { deviceAction { DeviceRepository.connectSource(it.mac) } },
+        onDisconnect = ::disconnect,
+        onDismiss = { sheetMac = null },
+    )
 
     disconnectTarget?.let { device ->
         ConfirmLocalDisconnectDialog(
@@ -109,93 +131,80 @@ fun HomeScreen(
             // First read in flight: show placeholders instead of empty rows.
             val loading = state.modes.isEmpty() && (state.busy || state.connected)
 
-            if (state.battery == null && loading) BatterySkeleton() else BatteryRow(state)
+            // 8dp here plus the column's 8dp gap gives 16dp below, matching the
+            // slack the top app bar leaves above the chips.
+            Box(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                if (state.battery == null && loading) BatterySkeleton() else BatteryRow(state)
+            }
 
             // Device-only, like the rows in Settings: hidden while disconnected
             // rather than shown empty, since we have no idea what's attached.
             if (state.connected) {
-                SectionLabel("Connected to")
-                if (state.pairedDevices.isEmpty() && loading) {
-                    ConnectedDeviceSkeleton()
-                } else {
-                    state.connectedDevices.forEach { device ->
-                        ConnectedDeviceRow(
-                            device = device,
-                            playing = device.mac == state.activeSourceMac,
-                            // Dropping the phone this app runs on also drops
-                            // our own BMAP link, so that one asks first. Every
-                            // other disconnect is the common case and stays a
-                            // single tap.
-                            onDisconnect = {
-                                if (device.isLocalDevice) disconnectTarget = device
-                                else deviceAction { DeviceRepository.disconnectSource(device.mac) }
-                            },
-                        )
-                    }
-                    if (state.connectedDevices.isEmpty()) {
+                SectionCard(title = "Connected to", linkLabel = "All devices",
+                    onLink = onOpenConnections) {
+                    if (state.pairedDevices.isEmpty() && loading) {
+                        ConnectedDeviceSkeleton()
+                    } else if (state.connectedDevices.isEmpty()) {
                         Text(
                             "No devices connected",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    } else {
+                        state.connectedDevices.forEach { device ->
+                            ConnectedDeviceRow(
+                                device = device,
+                                playing = device.mac == state.activeSourceMac,
+                                onClick = { sheetMac = device.mac },
+                                onDisconnect = { disconnect(device) },
+                            )
+                        }
                     }
                 }
-                TextButton(
-                    onClick = onOpenConnections,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text("All devices")
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        AppIcons.ArrowForward, contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+            }
+
+            // No "Audio" title: it stacked straight onto the "Mode" heading
+            // below it and read as a double header.
+            SectionCard(title = "Mode", linkLabel = "All modes", onLink = onOpenProfiles) {
+                if (loading) {
+                    ModeCardsSkeleton()
+                } else {
+                    ModeCards(
+                        modes = state.starredModes.ifEmpty { state.modes.filter { !it.isFreeSlot } },
+                        currentIdx = state.currentModeIdx,
+                        enabled = state.connected,
+                        onSelect = { deviceAction { DeviceRepository.setMode(it) } },
+                    )
+                }
+
+                SubSectionHeader("Immersive audio")
+                if (state.audioSettings == null && loading) {
+                    BarSkeleton()
+                } else {
+                    ImmersiveAudioSelector(
+                        selected = state.audioSettings?.spatial,
+                        enabled = state.connected,
+                        onSelect = { deviceAction { DeviceRepository.setSpatial(it) } },
                     )
                 }
             }
 
-            SectionLabel("Mode")
-            if (loading) {
-                ModeCardsSkeleton()
-            } else {
-                ModeCards(
-                    modes = state.starredModes.ifEmpty { state.modes.filter { !it.isFreeSlot } },
-                    currentIdx = state.currentModeIdx,
-                    enabled = state.connected,
-                    onSelect = { deviceAction { DeviceRepository.setMode(it) } },
-                )
-            }
-            TextButton(onClick = onOpenProfiles, modifier = Modifier.align(Alignment.End)) {
-                Text("All modes")
-                Spacer(Modifier.width(4.dp))
-                Icon(AppIcons.ArrowForward, contentDescription = null,
-                    modifier = Modifier.size(18.dp))
-            }
-
-            SectionLabel("Immersive audio")
-            if (state.audioSettings == null && loading) {
-                BarSkeleton()
-            } else {
-                ImmersiveAudioSelector(
-                    selected = state.audioSettings?.spatial,
-                    enabled = state.connected,
-                    onSelect = { deviceAction { DeviceRepository.setSpatial(it) } },
-                )
-            }
-
-            SectionLabel("Noise cancelling")
-            if (state.audioSettings == null && loading) {
-                NoiseControlsSkeleton()
-            } else {
-                NoiseControls(state)
+            SectionCard {
+                if (state.audioSettings == null && loading) {
+                    NoiseControlsSkeleton()
+                } else {
+                    NoiseControls(state)
+                }
             }
 
             state.touchControls?.let { touchOn ->
-                SectionLabel("Controls")
-                SwitchRow(
-                    icon = AppIcons.TouchApp, label = "Touch controls",
-                    checked = touchOn, enabled = state.connected,
-                    supporting = "Tap and swipe gestures on the earbuds",
-                ) { deviceAction { DeviceRepository.setTouchControls(it) } }
+                SectionCard {
+                    SwitchRow(
+                        icon = AppIcons.TouchApp, label = "Touch controls",
+                        checked = touchOn, enabled = state.connected,
+                        supporting = "Tap and swipe gestures on the earbuds",
+                    ) { deviceAction { DeviceRepository.setTouchControls(it) } }
+                }
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -221,13 +230,79 @@ private fun NoiseControlsSkeleton() {
     }
 }
 
+/**
+ * A Home section. Grouping into cards is what lets the "All …" link sit on the
+ * title row: inside a card it obviously belongs to that section, so it no
+ * longer needs a slab of whitespace to separate it from the section below.
+ */
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+private fun SectionCard(
+    title: String? = null,
+    linkLabel: String? = null,
+    onLink: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                // Devices and modes arrive after the first frame; grow into
+                // them instead of snapping.
+                .animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            title?.let {
+                HeaderRow(it, MaterialTheme.typography.titleMedium, linkLabel, onLink)
+            }
+            content()
+        }
+    }
+}
+
+/** Heading for a second block inside a card, e.g. Immersive audio under Mode. */
+@Composable
+private fun SubSectionHeader(
+    title: String,
+    linkLabel: String? = null,
+    onLink: (() -> Unit)? = null,
+) {
+    HeaderRow(
+        title, MaterialTheme.typography.titleMedium, linkLabel, onLink,
+        modifier = Modifier.padding(top = 8.dp),
     )
+}
+
+@Composable
+private fun HeaderRow(
+    title: String,
+    style: androidx.compose.ui.text.TextStyle,
+    linkLabel: String?,
+    onLink: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier.fillMaxWidth().height(32.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = style, modifier = Modifier.weight(1f))
+        if (linkLabel != null && onLink != null) {
+            // Height pinned: TextButton's 40dp minimum made every header row
+            // taller than its text, which is what left the cards looking
+            // top-heavy against a flat 12dp bottom padding.
+            TextButton(
+                onClick = onLink,
+                modifier = Modifier.height(32.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text(linkLabel)
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    AppIcons.ArrowForward, contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -282,18 +357,34 @@ private fun BatteryRow(state: eu.depau.bosectl.data.BoseState) {
             listOfNotNull(battery.overall?.let { BatteryCell(AppIcons.BatteryStd, "", it) })
         }
         for (cell in cells) {
-            AssistChip(
-                onClick = {},
-                label = {
-                    Text(if (cell.label.isEmpty()) "${cell.value}%" else "${cell.label} ${cell.value}%")
-                },
-                leadingIcon = {
-                    Icon(
-                        cell.icon, contentDescription = null,
-                        Modifier.size(18.dp),
-                    )
-                },
+            InfoPill(
+                icon = cell.icon,
+                text = if (cell.label.isEmpty()) "${cell.value}%"
+                else "${cell.label} ${cell.value}%",
             )
+        }
+    }
+}
+
+/**
+ * A read-only chip. Deliberately not AssistChip: these report state and do
+ * nothing when tapped, and a chip that ripples under your finger promises
+ * otherwise.
+ */
+@Composable
+private fun InfoPill(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -358,8 +449,13 @@ private fun ModeCard(
         modifier = modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
+            else MaterialTheme.colorScheme.surfaceContainerHighest,
         ),
+        // Outlined when unselected. These sit inside the Audio card now, and
+        // with dynamic colour every surface tone lands within a few percent of
+        // the card's own — the tiles were invisible until they had a border.
+        border = if (selected) null
+        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 4.dp),
@@ -400,6 +496,12 @@ fun ImmersiveAudioSelector(
                 onClick = { onSelect(value) },
                 enabled = enabled,
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                // Default inactive container is `surface`, which is darker than
+                // the card this now sits on and made the unselected segments
+                // read as holes punched through it.
+                colors = SegmentedButtonDefaults.colors(
+                    inactiveContainerColor = Color.Transparent,
+                ),
                 icon = {},
                 label = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -492,47 +594,47 @@ private fun cncLevelName(displayLevel: Int) = when (displayLevel) {
 private fun ConnectedDeviceRow(
     device: PairedDevice,
     playing: Boolean,
+    onClick: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    val tags = listOfNotNull(
-        "this device".takeIf { device.isLocalDevice },
-        "playing".takeIf { playing },
-    )
+    val label = device.name.ifEmpty { device.mac }
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(AppIcons.Bluetooth, contentDescription = null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text(device.name.ifEmpty { device.mac }, maxLines = 1)
-            if (tags.isNotEmpty()) {
+            Text(label, maxLines = 1)
+            deviceTags(device, playing)?.let {
                 Text(
-                    tags.joinToString(" · "),
+                    it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         IconButton(onClick = onDisconnect) {
-            Icon(
-                AppIcons.BluetoothDisabled,
-                contentDescription = "Disconnect ${device.name.ifEmpty { device.mac }}",
-            )
+            Icon(AppIcons.LinkOff, contentDescription = "Disconnect $label")
         }
     }
 }
 
 @Composable
 private fun ConnectedDeviceSkeleton() {
-    repeat(2) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconSkeleton(20.dp)
-            Spacer(Modifier.width(8.dp))
-            SkeletonBox(Modifier.width(140.dp).height(18.dp), cornerRadius = 4.dp)
+    // Mirrors exactly one ConnectedDeviceRow: its trailing IconButton is what
+    // sets the 48dp row height, and the two bars are the name and the tag line.
+    // One device is the common case; a second animates in via the card's
+    // animateContentSize rather than being guessed at here.
+    Row(
+        Modifier.fillMaxWidth().height(48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconSkeleton(20.dp)
+        Spacer(Modifier.width(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SkeletonBox(Modifier.width(120.dp).height(16.dp), cornerRadius = 4.dp)
+            SkeletonBox(Modifier.width(76.dp).height(12.dp), cornerRadius = 4.dp)
         }
     }
 }

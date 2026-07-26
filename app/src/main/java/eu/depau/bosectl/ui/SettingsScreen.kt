@@ -53,7 +53,6 @@ import kotlinx.coroutines.launch
 
 private data class SettingsSnapshot(
     val sidetone: Sidetone = Sidetone.OFF,
-    val multipoint: Boolean = false,
     val autoPause: Boolean = false,
     val autoAnswer: Boolean = false,
     val touchControls: Boolean = true,
@@ -65,7 +64,11 @@ private data class SettingsSnapshot(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenEq: () -> Unit,
+    onOpenConnections: () -> Unit,
+) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var snapshot by remember { mutableStateOf<SettingsSnapshot?>(null) }
@@ -86,7 +89,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
             DeviceRepository.withDevice { conn ->
                 SettingsSnapshot(
                     sidetone = runCatching { conn.sidetone() }.getOrDefault(Sidetone.OFF),
-                    multipoint = runCatching { conn.multipoint() }.getOrDefault(false),
                     autoPause = runCatching { conn.autoPause() }.getOrDefault(false),
                     autoAnswer = runCatching { conn.autoAnswer() }.getOrDefault(false),
                     touchControls = runCatching { conn.touchControls() }.getOrDefault(true),
@@ -247,25 +249,18 @@ fun SettingsScreen(onBack: () -> Unit, onOpenEq: () -> Unit) {
 
                 SectionHeader("Bluetooth & device")
                 ListItem(
-                    headlineContent = { Text("Bluetooth pairing mode") },
-                    supportingContent = {
-                        Text("Make the headphones discoverable for a new device")
-                    },
-                    trailingContent = {
-                        Button(onClick = {
-                            act { DeviceRepository.withDevice { it.setPairingMode(true) } }
-                        }) { Text("Start") }
-                    },
-                )
-                SwitchItem("Multipoint", "Connect two devices at once",
-                    s.multipoint, loaded, loading) { v ->
-                    update { copy(multipoint = v) }
-                    act { DeviceRepository.withDevice { it.setMultipoint(v) } }
-                }
-                ListItem(
                     headlineContent = { Text("Device name") },
                     supportingContent = { Text(state.deviceName ?: "") },
                     modifier = Modifier.clickable { showRename = true },
+                )
+                // Pairing mode and multipoint live on the Connections screen,
+                // next to the device list they act on.
+                ListItem(
+                    headlineContent = { Text("Connections") },
+                    supportingContent = {
+                        Text("Paired devices, multipoint and pairing mode")
+                    },
+                    modifier = Modifier.clickable(onClick = onOpenConnections),
                 )
                 ListItem(
                     headlineContent = {

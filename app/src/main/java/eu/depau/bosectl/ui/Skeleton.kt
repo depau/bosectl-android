@@ -23,20 +23,26 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** Pulsing placeholder used while the first device read is in flight. */
+/**
+ * Pulsing placeholder used while the first device read is in flight.
+ *
+ * Tinted from `onSurface` rather than a surface tone: these now sit inside
+ * cards, and every surface tone lands within a few percent of the card's own
+ * colour under dynamic theming, which made the placeholders invisible.
+ */
 @Composable
 fun SkeletonBox(modifier: Modifier = Modifier, cornerRadius: Dp = 12.dp) {
     val transition = rememberInfiniteTransition(label = "skeleton")
     val alpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.7f,
+        initialValue = 0.08f,
+        targetValue = 0.20f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "alpha",
     )
     Spacer(
         modifier
             .alpha(alpha)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(cornerRadius))
+            .background(MaterialTheme.colorScheme.onSurface, RoundedCornerShape(cornerRadius))
     )
 }
 
@@ -50,12 +56,17 @@ fun BatterySkeleton() {
     }
 }
 
+/**
+ * Three tiles at the height a real [ModeCard] resolves to (16dp padding +
+ * 28dp icon + 8dp gap + label + 16dp padding). Matching both the count and the
+ * height keeps the card from resizing when the modes land.
+ */
 @Composable
 fun ModeCardsSkeleton() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        repeat(4) {
+        repeat(3) {
             SkeletonBox(
-                Modifier.weight(1f).height(96.dp),
+                Modifier.weight(1f).height(88.dp),
                 cornerRadius = 12.dp,
             )
         }

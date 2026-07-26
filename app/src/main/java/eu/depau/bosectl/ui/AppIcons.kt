@@ -27,6 +27,7 @@ object AppIcons {
     val Edit: ImageVector @Composable get() = res(R.drawable.ic_edit)
     val Headphones: ImageVector @Composable get() = res(R.drawable.ic_headphones)
     val Hearing: ImageVector @Composable get() = res(R.drawable.ic_hearing)
+    val LinkOff: ImageVector @Composable get() = res(R.drawable.ic_link_off)
     val Lock: ImageVector @Composable get() = res(R.drawable.ic_lock)
     val NoiseControlOff: ImageVector @Composable get() = res(R.drawable.ic_noise_control_off)
     val NoiseControlOn: ImageVector @Composable get() = res(R.drawable.ic_noise_control_on)
