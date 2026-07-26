@@ -326,6 +326,68 @@ wait for bytes, act.
 
 ---
 
+## 12. The other channels the earbuds expose
+
+Read from BlueZ's SDP cache (`/var/lib/bluetooth/<adapter>/cache/<device>`, root),
+which stores each record as raw hex — no `sdptool` needed:
+
+| Service                                          | Transport                          |
+|--------------------------------------------------|------------------------------------|
+| `9b26d8c0-…` (`SRfcomm`, shortcut presses — §11) | RFCOMM ch 24                       |
+| `df21fe2c-…` (Google Fast Pair message stream)   | RFCOMM ch 22                       |
+| `00000000-deca-fade-…` (BMAP)                    | RFCOMM ch 14                       |
+| SPP (`0x1101`), six records                      | RFCOMM ch 1 and ch 2               |
+| `eb04 / eb06 / eb07-d102-11e1-…` (Bose)          | L2CAP PSM 0xFEFF / 0xFEFD / 0xFEFB |
+| `88b0ee3c-… / 346d5c4b-… / 77265d41-…`           | L2CAP PSM 0xFCFF / 0xFCFD / 0xFCFB |
+
+Channel numbers are per-device; resolve them from SDP rather than hardcoding.
+
+**The BMAP UUID advertises channel 14** — the status beacon from §1. More evidence
+that record is useless for BMAP. From Linux, BMAP answered on **channel 1** while
+channel 2 was refused; from Android, channel 2 works. `ponytail:` unexplained —
+possibly one BMAP session per link, or the phone held channel 2 at the time. If a
+connect is refused, try the other before concluding the device is busy.
+
+### Google Fast Pair message stream
+
+Publicly specified, unlike everything else here:
+[Message Stream](https://developers.google.com/nearby/fast-pair/specifications/extensions/messagestream),
+[Device Information](https://developers.google.com/nearby/fast-pair/specifications/extensions/deviceinformation),
+[Hearable Controls](https://developers.google.com/nearby/fast-pair/specifications/extensions/hearablecontrols).
+Frames are `[group][code][uint16 be length][data]`. Connecting to ch 22 gets an
+unprompted burst:
+
+```
+03 01 0003 a501e2      # Device information / model id
+03 03 0003 5a 5a 64    # battery: left 90%, right 90%, case 100% (bit 7 = charging)
+03 0a 0008 <8 bytes>   # session nonce
+03 02 0006 <6 bytes>   # current BLE address
+```
+
+Battery arrives again on every change, so this is a subscription-free alternative
+to `[2.2]`. Group `0x08` (Hearable Controls) carries ANC state both ways: the
+device notifies with `0x13`, a client sets with `0x12`, and the payload's four
+bytes are version, UI-toggle flags, settable-toggle flags and current state —
+Google's model of ANC (transparent / adaptive / off / ANC), not Bose's 0-10 CNC
+scale. No reason for this app to prefer any of it over BMAP, but it is a useful
+cross-check when a BMAP reading looks wrong.
+
+## 13. Findings from the official app
+
+- **`[2.12]` StatusButton** is a richer sibling of `[1.9]`: bytes 0-2 the same
+  (button id, event, configured action), then the supported mask (3-7), an
+  *unavailable* mask (7-11), and `(action, reason)` pairs (11-75).
+  `ponytail:` never exercised on this device.
+- **`[7.10]` ControlClientInteraction** exists with a state machine
+  (Idle / LocalActivity / RequestPending / AuthorizationPending /
+  MediaResponsePending / Rendering) and a START taking `[event][uint32 timeout]`,
+  which reads exactly like "client, go render some media". The app never sends it,
+  and `ActionButtonMode.ClientInteraction` (15) is absent from this device's
+  supported mask `000b4002` — the app's own label mapper calls 15 unknown.
+- The action enum matches `BUTTON_ACTIONS` in `Types.kt`, including the gap at 18.
+
+---
+
 ## Reproducing: the probe build
 
 The app carries an on-device protocol probe in a dedicated `probe` product
