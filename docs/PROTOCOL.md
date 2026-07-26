@@ -280,6 +280,52 @@ unsolicited stream instead of dropping them.
 
 ---
 
+## 11. Spotify Tap: Shortcut presses are announced outside BMAP, on RFCOMM channel 24
+
+**How "Spotify Tap" actually works: the earbuds never launch anything.** Spotify
+opens an RFCOMM socket to a service *on the earbuds*, and a shortcut long-press
+pushes one frame down it. The official Bose app has no runtime part in this — its
+only role is writing `[1.9]`, and its "Spotify" option is gated purely on
+`isPackageInstalled("com.spotify.music")`, which the firmware knows nothing about.
+
+| SDP | Value |
+|---|---|
+| Service UUID | `9b26d8c0-a8ed-440b-95b0-c4714a518bcc` |
+| SDP service name | `SRfcomm` |
+| RFCOMM channel | 24 on this unit — read it from SDP, do not hardcode |
+
+The press frame is 82 bytes, NUL-separated strings after a 2-byte header:
+
+```
+01 50 | "<32 hex chars>" 00 | "Bose QuietComfort Ultra Earbuds (2nd Gen)" 00 | "Bose" 00
+ ^  ^--- 0x50 = 80 bytes follow
+ opcode 01
+```
+
+The hex string is a stable per-device id (redacted here — it is a persistent
+device identifier, don't paste captures of it into public issues). Verified at
+RFCOMM level in `btmon`: UIH frame, address `0xc7` → DLCI 49 → server channel 24.
+
+- **Any enabled shortcut notifies, not just Spotify.** With `[1.9]` read back as
+  RIGHT `action=16 SpotifyGo` and LEFT `action=17 ModesCarousel`, long-pressing
+  the *left* bud emits the identical frame; the configured action still runs
+  locally. The payload carries no button id, so a listener cannot tell the buds
+  apart. Setting a button to `action=14` (Disabled) does stop the notifications —
+  disabled means disabled.
+- **It retries.** An unacknowledged frame is re-sent ~3.6 s later, so presses a
+  few seconds apart look like pairs in a passive capture. Don't count frames as
+  presses.
+- Nothing else carries the event: an 11 MB HCI capture across many presses
+  contains no AVRCP passthrough and exactly one AT command (`AT+BIEV=2,80`, an
+  HFP battery report).
+
+`ponytail:` the frame's semantics beyond "a shortcut was long-pressed" are
+unknown — opcode `01` is the only one seen, and nothing was ever sent *to* the
+service. That is enough for an app that just wants a programmable button: connect,
+wait for bytes, act.
+
+---
+
 ## Reproducing: the probe build
 
 The app carries an on-device protocol probe in a dedicated `probe` product
