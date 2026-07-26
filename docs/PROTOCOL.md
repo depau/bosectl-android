@@ -207,6 +207,57 @@ auth-gated, though plain `GET [5.1]` works and returns the active source.
 `0xff` means "no mode active" (observed with the buds in the case). Treat it as
 "unknown" rather than mapping it to a slot index.
 
+## 10. Notifications: the device is silent until you subscribe
+
+The earbuds send **no** unsolicited frames by default. Change the mode with the
+on-bud shortcuts and a connected client sees nothing — verified twice with the
+socket demonstrably alive (GETs before and after showed the mode had changed).
+
+The official app subscribes first, via `NotificationByFblock`:
+
+```
+[9.2] SETGET  [bitmask][function-block bitset]
+```
+
+| Byte | Meaning |
+|---|---|
+| 0 | `NotificationBitmask`: 0 = Overwrite, 1 = Enable, 2 = Disable |
+| 1-4 | Function-block bitset, big-endian, **bit index = function block id** |
+
+Bit indexing is by *block id*, not enum ordinal — `FunctionBlocksBitSet.setBit`
+uses `getFunctionBlockId()`, so AudioModes (31) is the top bit of a 4-byte mask.
+`BitSetUtil` writes bit *i* to byte `len-(i/8)-1`, position `i%8`, which is just
+a big-endian integer where bit *i* has value 2^i. (The sibling
+`EnumeratedBitSet` used by the per-function variant indexes by `ordinal-1`
+instead — do not confuse them.)
+
+Subscribing to Settings, Status, AudioManagement and AudioModes:
+
+```
+TX 0902 02 05  01 80000026
+RX [9.2] op=3: 80000026        # echoes the active mask
+```
+
+After that, on-bud changes arrive immediately:
+
+```
+PUSH [31.3]  op=3: 07            # current mode
+PUSH [31.10] op=3: 0000020001    # head tracking -> Motion
+```
+
+The Notification block functions:
+
+| Address | Name |
+|---|---|
+| `[9.0]` | FblockInfo |
+| `[9.1]` | **NotificationReset** — clears subscriptions; not a GetAll |
+| `[9.2]` | NotificationByFblock |
+| `[9.3]` | NotificationByFunction — `[bitmask][fblock id][function bitset]` |
+| `[9.4]` | NotificationPeriodic |
+
+A plain `GET [9.2]` returns the currently subscribed mask (`00000000` when
+nothing is subscribed), which makes it easy to confirm registration took.
+
 ---
 
 ## Reproducing: the probe build

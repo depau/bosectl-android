@@ -22,6 +22,7 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
         val AUTO_TRANSPARENCY = 1 to 29
         val TOUCH_CONTROLS = 1 to 34
         val BATTERY = 2 to 2
+        val NOTIFY_BY_FBLOCK = 9 to 2
         val PAIRING = 4 to 8
         val POWER = 7 to 4
         val GET_ALL_MODES = 31 to 1
@@ -101,6 +102,22 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
             }
         }
         return DeviceSnapshot(currentIdx, modes.sortedBy { it.modeIdx }, favorites, settings)
+    }
+
+    /**
+     * Subscribe to unsolicited STATUS frames for whole function blocks.
+     *
+     * From the official app: NotificationByFblock is [9.2] and its payload is
+     * [NotificationBitmask][function-block bitset]. The bitset is indexed by
+     * *function block id* (FunctionBlocksBitSet.setBit uses getFunctionBlockId),
+     * and BitSetUtil writes bit i into byte len-(i/8)-1 at position i%8 — i.e. a
+     * big-endian integer where bit i has value 2^i.
+     *
+     * Beware [9.1]: that is NotificationReset, not GetAll — it clears these.
+     */
+    suspend fun enableNotifications(blocks: List<Int> = NOTIFY_BLOCKS): List<Int> {
+        val reply = setGet(Addr.NOTIFY_BY_FBLOCK, buildNotifyByFblock(NotificationBitmask.ENABLE, blocks))
+        return parseNotifyByFblock(reply.payload)
     }
 
     // ── Writes ───────────────────────────────────────────────────────────────

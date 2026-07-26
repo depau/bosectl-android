@@ -23,6 +23,7 @@ import eu.depau.bosectl.widget.BoseWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +34,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 private const val TAG = "DeviceRepository"
+private const val POLL_FOREGROUND_MS = 2000L
+private const val POLL_BACKGROUND_MS = 10000L
 
 data class BoseState(
     val connected: Boolean = false,
@@ -65,6 +68,9 @@ object DeviceRepository {
     private val connectMutex = Mutex()
     private var connection: BmapConnection? = null
     private var unsolicitedJob: Job? = null
+    private var pollJob: Job? = null
+    private var visibleScreens = 0
+    private var notificationsActive = false
 
     private val _state = MutableStateFlow(BoseState())
     val state: StateFlow<BoseState> = _state.asStateFlow()
@@ -108,7 +114,18 @@ object DeviceRepository {
             unsolicitedJob = scope.launch {
                 conn.unsolicited.collect { onUnsolicited(it) }
             }
+            // Ask the device to push state changes; without this it stays silent
+            // and we have to poll. Format comes from the official app's
+            // NotificationByFblock [9.2].
+            notificationsActive = runCatching { conn.enableNotifications() }
+                .onSuccess { Log.i(TAG, "Notifications enabled for blocks $it") }
+                .onFailure { Log.w(TAG, "Notification subscribe failed", it) }
+                .getOrDefault(emptyList())
+                .isNotEmpty()
             _state.value = _state.value.copy(connected = true, busy = false)
+            // Push is the mechanism; polling only covers firmware that refuses
+            // the subscription.
+            if (!notificationsActive) startPolling()
             conn
         } catch (e: Exception) {
             _state.value = _state.value.copy(
@@ -120,6 +137,7 @@ object DeviceRepository {
     }
 
     fun disconnect() {
+        stopPolling()
         unsolicitedJob?.cancel()
         unsolicitedJob = null
         connection?.close()
@@ -172,6 +190,51 @@ object DeviceRepository {
         }.getOrDefault(true)
     }
 
+    /**
+     * Fallback for devices that refuse the [9.2] notification subscription.
+     * When the subscription works — verified on QC Ultra Earbuds — the device
+     * pushes [31.3]/[31.10] immediately and this never runs.
+     */
+    private fun startPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = scope.launch {
+            while (true) {
+                delay(if (visibleScreens > 0) POLL_FOREGROUND_MS else POLL_BACKGROUND_MS)
+                if (!state.value.connected) continue
+                runCatching { refreshLive() }
+                    .onFailure { Log.d(TAG, "Poll failed: ${it.message}") }
+            }
+        }
+    }
+
+    private fun stopPolling() {
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    /** Screens report visibility so polling can slow down when nobody is looking. */
+    fun onScreenVisible() {
+        visibleScreens++
+        autoConnectIfAvailable()
+    }
+
+    fun onScreenHidden() {
+        visibleScreens = (visibleScreens - 1).coerceAtLeast(0)
+    }
+
+    /** The cheap subset that on-device controls can change. */
+    private suspend fun refreshLive() {
+        val conn = connection?.takeIf { it.isConnected } ?: return
+        val mode = conn.currentModeIdx()
+        val settings = conn.audioSettings()
+        if (mode == _state.value.currentModeIdx && settings == _state.value.audioSettings) return
+        _state.value = _state.value.copy(
+            currentModeIdx = mode ?: _state.value.currentModeIdx,
+            audioSettings = settings ?: _state.value.audioSettings,
+        )
+        persistWidgetCache()
+    }
+
     /** Full state refresh: one GetAll drain + battery + name (+ firmware once). */
     suspend fun refresh() {
         val conn = ensureConnected()
@@ -203,6 +266,7 @@ object DeviceRepository {
 
     /** Device-pushed STATUS frames (e.g. mode switched via earbud gestures). */
     private suspend fun onUnsolicited(packet: eu.depau.bosectl.bmap.BmapPacket) {
+        Log.d(TAG, "PUSH $packet")
         if (packet.op != Op.STATUS) return
         val s = _state.value
         when {

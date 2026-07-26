@@ -50,3 +50,22 @@ class WriteModeTest {
             .takeWhile { it != 0.toByte() }.toByteArray().decodeToString())
     }
 }
+
+class NotificationSubscriptionTest {
+    /**
+     * [9.2] layout, from the official app's FunctionBlocksBitSet + BitSetUtil:
+     * bit index is the function block id, encoded big-endian.
+     */
+    @Test
+    fun blockBitsetIsBigEndianByBlockId() {
+        val payload = buildNotifyByFblock(NotificationBitmask.ENABLE, listOf(1, 2, 5, 31))
+        assertEquals(5, payload.size)
+        assertEquals(NotificationBitmask.ENABLE, payload[0])
+        // AudioModes(31) -> top bit of the first byte; 1, 2 and 5 -> last byte
+        assertEquals(0x80.toByte(), payload[1])
+        assertEquals(0x00.toByte(), payload[2])
+        assertEquals(0x00.toByte(), payload[3])
+        assertEquals(0x26.toByte(), payload[4])
+        assertEquals(listOf(1, 2, 5, 31), parseNotifyByFblock(payload.drop(1).toByteArray()))
+    }
+}

@@ -7,6 +7,7 @@ import android.util.Log
 import eu.depau.bosectl.bmap.Op
 import eu.depau.bosectl.bmap.bmapPacket
 import eu.depau.bosectl.data.DeviceRepository
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -29,6 +30,10 @@ class ProbeReceiver : BroadcastReceiver() {
                         "variants" -> writeVariants(label)
                         "prompts" -> promptSweep(label)
                         "roundtrip" -> roundTrip(label)
+                        "listen" -> listenProbe(label)
+                        "notify" -> notifyProbe(label)
+                        "subscribe" -> subscribeProbe(label)
+                        "notifystart" -> notifyStartProbe(label)
                         else -> probe()
                     }
                 }
@@ -92,7 +97,7 @@ class ProbeReceiver : BroadcastReceiver() {
                     conn.raw(bmapPacket(31, 6, Op.SETGET, payload), drain = true)
                 }.getOrElse { listOf<eu.depau.bosectl.bmap.BmapPacket>() }
                 Log.i(TAG, "[$label] $desc (slot $target) -> " +
-                    (result.joinToString { "${'$'}it" }.ifEmpty { "no reply" }))
+                    (result.joinToString { "$it" }.ifEmpty { "no reply" }))
             }
         }
     }
@@ -132,21 +137,117 @@ class ProbeReceiver : BroadcastReceiver() {
             // Clear any leftovers from earlier probing first.
             conn.snapshot().modes.filter { it.name == "ProbeTest" || it.name.startsWith("P") &&
                 it.name.drop(1).toIntOrNull() != null }.forEach {
-                Log.i(TAG, "[$label] clearing stale ${'$'}{it.name} in slot ${'$'}{it.modeIdx}")
+                Log.i(TAG, "[$label] clearing stale ${it.name} in slot ${it.modeIdx}")
                 runCatching { conn.deleteMode(it.modeIdx) }
             }
             val slot = conn.snapshot().modes.firstOrNull { it.isFreeSlot }?.modeIdx ?: return@withDevice
             runCatching {
                 conn.writeMode(slot, "Roundtrip", promptId = 12, cncLevel = 5, spatial = eu.depau.bosectl.bmap.Spatial.STILL)
-            }.onSuccess { Log.i(TAG, "[$label] create OK in slot ${'$'}slot") }
-                .onFailure { Log.e(TAG, "[$label] create FAILED: ${'$'}it") }
+            }.onSuccess { Log.i(TAG, "[$label] create OK in slot $slot") }
+                .onFailure { Log.e(TAG, "[$label] create FAILED: $it") }
             conn.snapshot().modes.filter { it.modeIdx == slot }
-                .forEach { Log.i(TAG, "[$label] created: ${'$'}it") }
+                .forEach { Log.i(TAG, "[$label] created: $it") }
             runCatching { conn.deleteMode(slot) }
                 .onSuccess { Log.i(TAG, "[$label] delete OK") }
-                .onFailure { Log.e(TAG, "[$label] delete FAILED: ${'$'}it") }
+                .onFailure { Log.e(TAG, "[$label] delete FAILED: $it") }
             conn.snapshot().modes.filter { it.modeIdx == slot }
-                .forEach { Log.i(TAG, "[$label] after delete: ${'$'}it") }
+                .forEach { Log.i(TAG, "[$label] after delete: $it") }
+        }
+    }
+
+    /**
+     * Is the socket alive, and does the device push anything unprompted?
+     * Reads state, sits idle for 40s logging every frame, then reads again.
+     */
+    private suspend fun listenProbe(label: String) {
+        DeviceRepository.withDevice { conn ->
+            Log.i(TAG, "[$label] connected=${conn.isConnected}")
+            Log.i(TAG, "[$label] mode BEFORE=${conn.currentModeIdx()} " +
+                "spatial=${conn.audioSettings()?.spatial}")
+            val seen = mutableListOf<String>()
+            val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                conn.unsolicited.collect {
+                    seen.add(it.toString())
+                    Log.i(TAG, "[$label] UNSOLICITED: $it")
+                }
+            }
+            Log.i(TAG, "[$label] listening for 40s — change the mode on the earbuds now")
+            kotlinx.coroutines.delay(40_000)
+            job.cancel()
+            Log.i(TAG, "[$label] unsolicited frames seen: ${seen.size}")
+            Log.i(TAG, "[$label] still connected=${conn.isConnected}")
+            Log.i(TAG, "[$label] mode AFTER=${conn.currentModeIdx()} " +
+                "spatial=${conn.audioSettings()?.spatial}")
+        }
+    }
+
+    /** Look for a notification/subscription mechanism (read-only). */
+    private suspend fun notifyProbe(label: String) {
+        DeviceRepository.withDevice { conn ->
+            for (func in 0..8) {
+                runCatching { conn.raw(bmapPacket(9, func, Op.GET)) }
+                    .onSuccess { it.forEach { p -> Log.i(TAG, "[$label] [9.$func] $p") } }
+                    .onFailure { Log.i(TAG, "[$label] [9.$func] ERR $it") }
+            }
+            // Some BMAP blocks start pushing once GetAll is issued on them.
+            Log.i(TAG, "[$label] GetAll on Notification block:")
+            runCatching { conn.raw(bmapPacket(9, 1, Op.START), drain = true) }
+                .onSuccess { it.forEach { p -> Log.i(TAG, "[$label]   $p") } }
+                .onFailure { Log.i(TAG, "[$label]   ERR $it") }
+        }
+    }
+
+    /** Try [9.2] as a notification subscription mask, then restore it. */
+    private suspend fun subscribeProbe(label: String) {
+        DeviceRepository.withDevice { conn ->
+            val before = conn.raw(bmapPacket(9, 2, Op.GET)).firstOrNull()
+            Log.i(TAG, "[$label] [9.2] before: $before")
+            for (mask in listOf("ffffffff", "00000001")) {
+                val bytes = mask.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                val reply = runCatching {
+                    conn.raw(bmapPacket(9, 2, Op.SETGET, bytes), drain = true)
+                }.getOrElse { listOf() }
+                Log.i(TAG, "[$label] SETGET $mask -> ${reply.joinToString()}")
+                if (reply.any { it.op == Op.STATUS }) break
+            }
+            Log.i(TAG, "[$label] [9.2] now: ${conn.raw(bmapPacket(9, 2, Op.GET)).firstOrNull()}")
+
+            val seen = mutableListOf<String>()
+            val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                conn.unsolicited.collect {
+                    seen.add(it.toString())
+                    Log.i(TAG, "[$label] PUSH: $it")
+                }
+            }
+            Log.i(TAG, "[$label] listening 40s — change the mode on the earbuds now")
+            kotlinx.coroutines.delay(40_000)
+            job.cancel()
+            Log.i(TAG, "[$label] pushes seen: ${seen.size}")
+
+            // Leave the device as we found it.
+            conn.raw(bmapPacket(9, 2, Op.SETGET, byteArrayOf(0, 0, 0, 0)), drain = true)
+            Log.i(TAG, "[$label] restored: ${conn.raw(bmapPacket(9, 2, Op.GET)).firstOrNull()}")
+        }
+    }
+
+    /** Does GetAll on the Notification block [9.1] subscribe us to pushes? */
+    private suspend fun notifyStartProbe(label: String) {
+        DeviceRepository.withDevice { conn ->
+            val r = runCatching { conn.raw(bmapPacket(9, 1, Op.START), drain = true) }
+                .getOrElse { listOf() }
+            Log.i(TAG, "[$label] [9.1] START -> ${r.joinToString()}")
+
+            val seen = mutableListOf<String>()
+            val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                conn.unsolicited.collect {
+                    seen.add(it.toString())
+                    Log.i(TAG, "[$label] PUSH: $it")
+                }
+            }
+            Log.i(TAG, "[$label] listening 40s — change mode/head tracking now")
+            kotlinx.coroutines.delay(40_000)
+            job.cancel()
+            Log.i(TAG, "[$label] pushes seen: ${seen.size}")
         }
     }
 

@@ -107,6 +107,10 @@ adb shell am broadcast -a eu.depau.bosectl.PROBE -p eu.depau.bosectl \
 adb logcat -d -s BmapProbe:I
 ```
 
+The earbuds push nothing until the app subscribes with `[9.2]`
+NotificationByFblock — see `docs/PROTOCOL.md` §10. If live updates ever stop,
+check that subscription before adding polling.
+
 Unknown registers are found by diffing a Settings GetAll before and after
 toggling one setting in the official Bose app. `[1.29]` (auto transparency) and
 `[1.34]` (touch controls) were both found this way; `[1.20]` and `[1.30]` are

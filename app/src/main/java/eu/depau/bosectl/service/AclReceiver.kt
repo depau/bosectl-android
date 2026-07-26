@@ -25,8 +25,13 @@ class AclReceiver : BroadcastReceiver() {
             try {
                 if (DeviceRepository.savedDeviceMac() != device.address) return@launch
                 when (intent.action) {
-                    BluetoothDevice.ACTION_ACL_CONNECTED -> DeviceRepository.onDeviceAppeared()
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> DeviceRepository.onDeviceDisappeared()
+                    // Bluetooth broadcasts guarded by BLUETOOTH_CONNECT are exempt
+                    // from the background foreground-service start restrictions.
+                    BluetoothDevice.ACTION_ACL_CONNECTED -> BoseConnectionService.start(context)
+                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                        DeviceRepository.onDeviceDisappeared()
+                        BoseConnectionService.stop(context)
+                    }
                 }
             } finally {
                 pending.finish()

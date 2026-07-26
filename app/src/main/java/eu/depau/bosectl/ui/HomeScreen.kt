@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,10 +54,6 @@ fun deviceAction(block: suspend () -> Unit) = DeviceRepository.runAsync(block)
 @Composable
 fun HomeScreen(onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit) {
     val state by DeviceRepository.state.collectAsStateWithLifecycle()
-
-    LaunchedEffect(Unit) {
-        DeviceRepository.autoConnectIfAvailable()
-    }
 
     Scaffold(
         topBar = {
