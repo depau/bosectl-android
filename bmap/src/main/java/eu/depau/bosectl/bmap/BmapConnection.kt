@@ -23,7 +23,16 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
         val TOUCH_CONTROLS = 1 to 34
         val BATTERY = 2 to 2
         val NOTIFY_BY_FBLOCK = 9 to 2
+        val DEV_CONNECT = 4 to 1
+        val DEV_DISCONNECT = 4 to 2
+        val DEV_FORGET = 4 to 3
+        val DEV_LIST = 4 to 4
+        val DEV_INFO = 4 to 5
+        val DEV_EXTENDED_INFO = 4 to 6
         val PAIRING = 4 to 8
+        val APP_ADDRESS = 4 to 9
+        val DEV_FEATURES = 4 to 14
+        val ACTIVE_SOURCE = 5 to 1
         val POWER = 7 to 4
         val GET_ALL_MODES = 31 to 1
         val CURRENT_MODE = 31 to 3
@@ -45,8 +54,8 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
         return packet
     }
 
-    private suspend fun get(addr: Pair<Int, Int>): ByteArray =
-        checkError(transport.request(bmapPacket(addr.first, addr.second, Op.GET))).payload
+    private suspend fun get(addr: Pair<Int, Int>, payload: ByteArray = ByteArray(0)): ByteArray =
+        checkError(transport.request(bmapPacket(addr.first, addr.second, Op.GET, payload))).payload
 
     private suspend fun setGet(addr: Pair<Int, Int>, payload: ByteArray): BmapPacket =
         checkError(transport.request(bmapPacket(addr.first, addr.second, Op.SETGET, payload)))
@@ -79,6 +88,40 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
             .mapNotNull { parseButtons(it.payload) }
     suspend fun audioSettings(): AudioSettings? = parseAudioSettings(get(Addr.AUDIO_SETTINGS))
     suspend fun favorites(): Favorites? = parseFavorites(get(Addr.FAVORITES))
+
+    // ── Device management [4.x] ──────────────────────────────────────────────
+
+    /** Known MACs, each paired with whether it is connected right now. */
+    suspend fun deviceList(): List<Pair<String, Boolean>> = parseDeviceList(get(Addr.DEV_LIST))
+
+    suspend fun deviceInfo(mac: String): PairedDevice? =
+        parseDeviceInfo(get(Addr.DEV_INFO, macToBytes(mac)))
+
+    suspend fun deviceExtendedInfo(mac: String): DeviceExtendedInfo? =
+        parseDeviceExtendedInfo(get(Addr.DEV_EXTENDED_INFO, macToBytes(mac)))
+
+    /**
+     * The device list with names. [4.4] carries only MACs, so this costs one
+     * [4.5] GET per device — six is the realistic worst case.
+     *
+     * The connected flag is taken from the [4.4] frame rather than [4.5]'s own
+     * bit: [4.4] is one consistent snapshot, and the per-device reads happen
+     * afterwards. A device whose info read fails still appears, named by MAC.
+     */
+    suspend fun pairedDevices(): List<PairedDevice> = deviceList().map { (mac, connected) ->
+        runCatching { deviceInfo(mac) }.getOrNull()?.copy(connected = connected)
+            ?: PairedDevice(
+                mac = mac, name = mac, connected = connected,
+                isLocalDevice = false, isBoseProduct = false,
+            )
+    }
+
+    /** MAC of the device currently holding audio. Read-only on this firmware. */
+    suspend fun activeSource(): String? = parseActiveSource(get(Addr.ACTIVE_SOURCE))
+
+    /** MAC of the device running this app, per [4.9]. */
+    suspend fun appAddress(): String? =
+        get(Addr.APP_ADDRESS).takeIf { it.size >= 6 }?.let { bytesToMac(it.copyOfRange(0, 6)) }
 
     /**
      * One GetAll [31.1] START drain returns the whole AudioModes state:
@@ -217,6 +260,53 @@ class BmapConnection(private val transport: BmapTransport) : AutoCloseable {
     suspend fun setPairingMode(enabled: Boolean) {
         start(Addr.PAIRING, byteArrayOf(if (enabled) 1 else 0))
     }
+
+    /**
+     * START on a block-4 address, drained.
+     *
+     * These answer with a burst, not a single frame: a [4.2] disconnect returns
+     * PROCESSING, then RESULT, and the device also pushes an updated [4.4] and
+     * a [5.1] in the middle of it. Only frames for the address we wrote are
+     * inspected — the rest are pushes that belong to the unsolicited stream and
+     * an unrelated ERROR among them must not be blamed on this call.
+     */
+    private suspend fun deviceWrite(addr: Pair<Int, Int>, payload: ByteArray) {
+        val replies = transport
+            .requestDrain(bmapPacket(addr.first, addr.second, Op.START, payload))
+            .filter { it.matches(addr) }
+        replies.forEach { checkError(it) }
+        if (replies.isEmpty())
+            throw BmapDeviceException("No reply to [${addr.first}.${addr.second}] START", -1)
+    }
+
+    /**
+     * Connect a known device. Unauthenticated START, verified on hardware.
+     *
+     * Unlike the other writes here this one acknowledges with PROCESSING and
+     * never sends a RESULT: the link comes up a few seconds later and the
+     * device announces it with a [4.4] push. Watch the device list for the
+     * outcome, not this call's return.
+     */
+    suspend fun connectDevice(mac: String) = deviceWrite(Addr.DEV_CONNECT, buildConnectDevice(mac))
+
+    /**
+     * Drop a device. Audio moves to the remaining connected device — that is
+     * the only way to move it, as this firmware has no source-select command
+     * (docs/PROTOCOL.md §14).
+     */
+    suspend fun disconnectDevice(mac: String) =
+        deviceWrite(Addr.DEV_DISCONNECT, macToBytes(mac))
+
+    /**
+     * Remove a device from the earbuds' pairing list. Not undoable from here:
+     * getting it back means re-pairing from the device itself.
+     *
+     * ponytail: [4.3] START is unverified on hardware. Its GET answers error 5
+     * exactly as [4.2]'s does and [4.2]'s START works, so this very likely does
+     * too — confirm before relying on it, and record the result in
+     * docs/PROTOCOL.md §14.
+     */
+    suspend fun forgetDevice(mac: String) = deviceWrite(Addr.DEV_FORGET, macToBytes(mac))
 
     suspend fun powerOff() {
         start(Addr.POWER, byteArrayOf(0))

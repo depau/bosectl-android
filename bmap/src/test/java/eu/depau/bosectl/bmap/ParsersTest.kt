@@ -226,3 +226,118 @@ class SettingsParsersTest {
         assertEquals(listOf(1, 14, 16, 17, 19), left.supportedActions)
     }
 }
+
+/**
+ * DeviceManagement [4.x] and AudioManagementSource [5.1].
+ *
+ * All vectors are real captures taken over RFCOMM from a laptop while the
+ * earbuds were also connected to a phone. Device state at capture time:
+ * "Frigo" 5C:F3:70:9B:8C:FF is the laptop running the probe (so isLocalDevice),
+ * "Pixel 9 Pro" 08:8B:C8:51:D4:8D is the phone, the rest are known but idle.
+ */
+class DeviceManagementTest {
+    private val laptop = "5C:F3:70:9B:8C:FF"
+    private val phone = "08:8B:C8:51:D4:8D"
+
+    @Test
+    fun macRoundTrip() {
+        assertEquals(laptop, bytesToMac(macToBytes(laptop)))
+        assertArrayEquals(hex("5cf3709b8cff"), macToBytes(laptop))
+    }
+
+    @Test
+    fun deviceListMaskIsPositional() {
+        // Both laptop and phone connected: mask 03 = entries 0 and 1.
+        val devices = parseDeviceList(
+            hex(
+                "03 5cf3709b8cff 088bc851d48d 842f573019cd " +
+                        "38f9f5246f9a 94e70bdbb126 001a7dda7113"
+            )
+        )
+        assertEquals(6, devices.size)
+        assertEquals(laptop to true, devices[0])
+        assertEquals(phone to true, devices[1])
+        assertFalse(devices[2].second)
+    }
+
+    /**
+     * The same physical state as above moments later, after the phone was
+     * dropped: the list came back in a different order and the mask followed
+     * the new positions. A count would have read 01 here, not 02 — this pair of
+     * vectors is what proves byte 0 is a positional bitmask, and why the mask
+     * must never be applied to MACs from an earlier frame.
+     */
+    @Test
+    fun deviceListReordersBetweenReads() {
+        val devices = parseDeviceList(
+            hex(
+                "02 088bc851d48d 5cf3709b8cff 842f573019cd " +
+                        "38f9f5246f9a 94e70bdbb126 001a7dda7113"
+            )
+        )
+        assertEquals(phone to false, devices[0])
+        assertEquals(laptop to true, devices[1])
+        assertEquals(1, devices.count { it.second })
+    }
+
+    @Test
+    fun emptyDeviceListIsMaskOnly() {
+        assertTrue(parseDeviceList(hex("00")).isEmpty())
+        assertTrue(parseDeviceList(ByteArray(0)).isEmpty())
+    }
+
+    @Test
+    fun deviceInfoNamesAndFlags() {
+        val local = parseDeviceInfo(hex("5cf3709b8cff 03 0203 467269676f"))!!
+        assertEquals(laptop, local.mac)
+        assertEquals("Frigo", local.name)
+        assertTrue(local.connected)
+        assertTrue(local.isLocalDevice)
+        assertFalse(local.isBoseProduct)
+
+        val idle = parseDeviceInfo(hex("088bc851d48d 00 0203 506978656c20392050726f"))!!
+        assertEquals("Pixel 9 Pro", idle.name)
+        assertFalse(idle.connected)
+        assertFalse(idle.isLocalDevice)
+
+        // Names run to the end of the payload — no NUL, no length prefix.
+        val long = parseDeviceInfo(
+            hex("842f573019cd 00 0203 496c696164436f72702d4a3943364852584b4858")
+        )!!
+        assertEquals("IliadCorp-J9C6HRXKHX", long.name)
+    }
+
+    @Test
+    fun deviceInfoRejectsShortPayload() {
+        assertNull(parseDeviceInfo(hex("5cf3709b8cff")))
+    }
+
+    @Test
+    fun extendedInfoProfileMasks() {
+        val connected = parseDeviceExtendedInfo(hex("5cf3709b8cff 0f 0f 5414"))!!
+        assertTrue(connected.paired.a2dp)
+        assertTrue(connected.paired.spp)
+        assertFalse(connected.paired.iap)
+        assertTrue(connected.connected.avrcp)
+
+        // REDPINE_GATT_V02: a2dp+avrcp+spp paired, nothing connected, no HFP.
+        val idle = parseDeviceExtendedInfo(hex("38f9f5246f9a 0d 00 5414"))!!
+        assertTrue(idle.paired.a2dp)
+        assertFalse(idle.paired.hfp)
+        assertTrue(idle.paired.avrcp)
+        assertFalse(idle.connected.a2dp)
+    }
+
+    @Test
+    fun activeSourceIsTheTrailingMac() {
+        assertEquals(laptop, parseActiveSource(hex("000f01 5cf3709b8cff")))
+        assertNull(parseActiveSource(hex("000f01")))
+    }
+
+    @Test
+    fun connectPayloadCarriesAddressTypeByte() {
+        // [4.1] takes a leading 00; [4.2] and [4.3] take a bare MAC.
+        assertArrayEquals(hex("00 088bc851d48d"), buildConnectDevice(phone))
+        assertArrayEquals(hex("088bc851d48d"), macToBytes(phone))
+    }
+}

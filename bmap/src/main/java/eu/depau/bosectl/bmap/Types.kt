@@ -121,6 +121,49 @@ data class ButtonMapping(
 
 data class Favorites(val slotCount: Int, val starred: Set<Int>)
 
+/**
+ * A device the earbuds know about, from DeviceManagement [4.4] + [4.5].
+ *
+ * [mac] is the canonical "AA:BB:CC:DD:EE:FF" form rather than raw bytes: it
+ * gives free equality and a stable list key, and the wire format is recovered
+ * with [macToBytes].
+ */
+data class PairedDevice(
+    val mac: String,
+    val name: String,
+    val connected: Boolean,
+    /** The device running this app, per [4.5] bit 1 / [4.9] AppAddress. */
+    val isLocalDevice: Boolean,
+    val isBoseProduct: Boolean,
+)
+
+/**
+ * Per-profile paired/connected bits from ExtendedInfo [4.6]. The same bit
+ * layout serves both masks.
+ */
+data class DeviceProfiles(
+    val a2dp: Boolean,
+    val hfp: Boolean,
+    val avrcp: Boolean,
+    val spp: Boolean,
+    val iap: Boolean,
+) {
+    companion object {
+        fun fromMask(mask: Int) = DeviceProfiles(
+            a2dp = mask and 0x01 != 0, hfp = mask and 0x02 != 0,
+            avrcp = mask and 0x04 != 0, spp = mask and 0x08 != 0,
+            iap = mask and 0x10 != 0,
+        )
+    }
+}
+
+/** ExtendedInfo [4.6]: which profiles are paired, and which are live. */
+data class DeviceExtendedInfo(
+    val mac: String,
+    val paired: DeviceProfiles,
+    val connected: DeviceProfiles,
+)
+
 /** Everything the GetAll [31.1] drain returns in one burst. */
 data class DeviceSnapshot(
     val currentModeIdx: Int?,
