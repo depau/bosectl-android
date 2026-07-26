@@ -51,6 +51,26 @@ fun parsePacket(data: ByteArray, offset: Int = 0): BmapPacket? {
     )
 }
 
+/**
+ * Does [reply] answer the request frame [sent], or is it an unrelated push?
+ *
+ * Once subscribed via [9.2], the device pushes a STATUS for every address whose
+ * value changes — including the one we just wrote, and it beats the real ack:
+ *
+ *     TX [31.3] START 0100     switch to mode 1
+ *     RX [31.3] STATUS 01      push: the mode changed
+ *     RX [31.10] STATUS ...    push: audio settings followed
+ *     RX [31.3] RESULT 01      the actual ack
+ *
+ * So a reply must carry the request's address, and a START is answered by
+ * RESULT/ERROR — never by STATUS, which is always the push.
+ */
+fun answersRequest(sent: ByteArray, reply: BmapPacket): Boolean {
+    if (sent.size < 3) return false
+    if (!reply.matches((sent[0].toInt() and 0xFF) to (sent[1].toInt() and 0xFF))) return false
+    return (sent[2].toInt() and 0x0F) != Op.START || reply.op != Op.STATUS
+}
+
 /** Split concatenated BMAP frames (e.g. a GetAll drain) into packets. */
 fun parseAllPackets(data: ByteArray): List<BmapPacket> {
     val packets = mutableListOf<BmapPacket>()

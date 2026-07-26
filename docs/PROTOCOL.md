@@ -258,6 +258,26 @@ The Notification block functions:
 A plain `GET [9.2]` returns the currently subscribed mask (`00000000` when
 nothing is subscribed), which makes it easy to confirm registration took.
 
+### Pushes race your own writes
+
+Once subscribed, a write is answered by *both* a push and an ack, and the push
+comes first — the value changed before the device got around to acknowledging it:
+
+```
+TX 1f0305020100          # [31.3] START, switch to mode 1
+RX [31.3]  op=3: 01      # push: the mode changed
+RX [31.10] op=3: 0a01000001   # push: audio settings that came with it
+RX [31.3]  op=6: 01      # RESULT — the actual ack
+```
+
+Treating the first frame after a send as the reply therefore breaks in two ways:
+a START looks like it failed (STATUS instead of RESULT), and any request can be
+answered by a push for a completely different address — a `[31.3]` push landing
+during a battery GET parses as battery data. Match replies on address, and treat
+STATUS as a push when the request was a START (`answersRequest` in
+`Protocol.kt`). Frames that don't match are pushes: forward them to the
+unsolicited stream instead of dropping them.
+
 ---
 
 ## Reproducing: the probe build

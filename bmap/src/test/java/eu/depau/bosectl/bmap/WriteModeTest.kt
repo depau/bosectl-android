@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Captures what the connection puts on the wire. */
@@ -48,6 +50,38 @@ class WriteModeTest {
         assertEquals("windBlock must be 0", 0, payload[38].toInt())
         assertEquals("None", payload.copyOfRange(3, 35)
             .takeWhile { it != 0.toByte() }.toByteArray().decodeToString())
+    }
+}
+
+/**
+ * Real capture of a mode switch while subscribed: the pushes beat the ack, and
+ * taking the first frame as the reply made every switch report failure.
+ */
+class ResponseMatchingTest {
+    private val sent = bmapPacket(31, 3, Op.START, byteArrayOf(1, 0))
+
+    @Test
+    fun statusPushDoesNotAnswerAStart() =
+        assertFalse(answersRequest(sent, BmapPacket(31, 3, Op.STATUS, byteArrayOf(1))))
+
+    @Test
+    fun pushForAnotherAddressIsNotAReply() =
+        assertFalse(answersRequest(sent, BmapPacket(31, 10, Op.STATUS, ByteArray(5))))
+
+    @Test
+    fun resultAnswersAStart() =
+        assertTrue(answersRequest(sent, BmapPacket(31, 3, Op.RESULT, byteArrayOf(1))))
+
+    @Test
+    fun errorAnswersItsRequest() =
+        assertTrue(answersRequest(sent, BmapPacket(31, 3, Op.ERROR, byteArrayOf(8))))
+
+    /** A GET is answered by STATUS — only the address distinguishes it. */
+    @Test
+    fun statusAnswersAGetOfTheSameAddress() {
+        val get = bmapPacket(2, 2, Op.GET)
+        assertTrue(answersRequest(get, BmapPacket(2, 2, Op.STATUS, ByteArray(16))))
+        assertFalse(answersRequest(get, BmapPacket(31, 3, Op.STATUS, byteArrayOf(1))))
     }
 }
 

@@ -144,17 +144,36 @@ class RfcommTransport private constructor(private val socket: BluetoothSocket) :
             throw BmapConnectionException("Connection closed while waiting for response", e)
         }
 
+    /**
+     * Wait for the frame that actually answers [sent], forwarding pushes that
+     * arrive in the meantime to [unsolicited] instead of mistaking one for the
+     * reply (see [answersRequest]). The whole wait shares one timeout.
+     */
+    private suspend fun awaitResponse(sent: ByteArray): BmapPacket {
+        val deadline = System.nanoTime() + FIRST_RESPONSE_TIMEOUT_MS * 1_000_000
+        while (true) {
+            val remaining = (deadline - System.nanoTime()) / 1_000_000
+            val packet = receiveOne(remaining.coerceAtLeast(1))
+            if (answersRequest(sent, packet)) return packet
+            Log.d(TAG, "Push during request: $packet")
+            _unsolicited.emit(packet)
+        }
+    }
+
     override suspend fun request(packet: ByteArray): BmapPacket = requestMutex.withLock {
         requestPending = true
         try {
             drainInbox()
             send(packet)
-            receiveOne(FIRST_RESPONSE_TIMEOUT_MS)
+            awaitResponse(packet)
         } finally {
             requestPending = false
         }
     }
 
+    // Not filtered like request(): a drain legitimately collects frames for other
+    // addresses (GetAll [31.1] answers with [31.3], [31.6], [31.8], [31.10]), so
+    // callers pick out what they need and a stray push is just one more frame.
     override suspend fun requestDrain(packet: ByteArray): List<BmapPacket> =
         requestMutex.withLock {
             requestPending = true
