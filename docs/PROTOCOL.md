@@ -53,13 +53,13 @@ a repeating group:
 [level, ff, ff, componentId] × N
 ```
 
-| componentId | Meaning |
-|---|---|
-| 0 | Single/only battery |
-| 1 | Left earbud |
-| 2 | Right earbud |
-| 3 | Charging case |
-| 4 | Overall |
+| componentId | Meaning             |
+|-------------|---------------------|
+| 0           | Single/only battery |
+| 1           | Left earbud         |
+| 2           | Right earbud        |
+| 3           | Charging case       |
+| 4           | Overall             |
 
 Real capture — L 100 %, R 100 %, overall 100 %, case 50 %:
 
@@ -83,11 +83,11 @@ must drain the reply:
 04 09 11 000b4002   left  shortcut (id 4), touch-and-hold, action 0x11 = 17
 ```
 
-| Button id | Meaning |
-|---|---|
-| 3 | Right shortcut (earbuds) |
-| 4 | Left shortcut (earbuds) |
-| 0x80 | Single shortcut (headphones) |
+| Button id | Meaning                      |
+|-----------|------------------------------|
+| 3         | Right shortcut (earbuds)     |
+| 4         | Left shortcut (earbuds)      |
+| 0x80      | Single shortcut (headphones) |
 
 Event `9` is `long_press` — the official app calls it "touch and hold".
 A GET payload (button id, or id+event) does **not** filter the response; the
@@ -99,13 +99,13 @@ low-index-first and computes `byteIndex * 8 + bit`, which produces garbage.
 
 For mask `000b4002`, the correct decoding is:
 
-| Bit | Action | Official app label |
-|---|---|---|
-| 1 | VPA | Accedi all'assistente vocale |
-| 14 | Disabled | (the per-side on/off toggle) |
-| 16 | SpotifyGo | Spotify |
-| 17 | ModesCarousel | Passa in rassegna le modalità |
-| 19 | SpatialAudioMode | Cambia l'audio immersivo |
+| Bit | Action           | Official app label            |
+|-----|------------------|-------------------------------|
+| 1   | VPA              | Accedi all'assistente vocale  |
+| 14  | Disabled         | (the per-side on/off toggle)  |
+| 16  | SpotifyGo        | Spotify                       |
+| 17  | ModesCarousel    | Passa in rassegna le modalità |
+| 19  | SpatialAudioMode | Cambia l'audio immersivo      |
 
 This matches the official app's option list exactly, which is what confirms the
 interpretation. pybmap's decoding yields `{8, 9, 11, 22, 25}` — actions the app
@@ -119,10 +119,10 @@ action 14 (Disabled) is how the app's per-side toggle switches a shortcut off.
 pybmap reads bit `0x02`. That bit is a constant capability flag, so multipoint
 always reads as enabled. The state is **bit 0**:
 
-| Value | State |
-|---|---|
-| `07` | Multipoint on |
-| `06` | Multipoint off |
+| Value | State          |
+|-------|----------------|
+| `07`  | Multipoint on  |
+| `06`  | Multipoint off |
 
 Writing a bare `[0]` / `[1]` does nothing. The write is a read-modify-write of
 the whole byte, preserving bits 1-2:
@@ -138,12 +138,12 @@ Verified round-trip: toggling from this app is reflected in the official app.
 Found by diffing `GetAll [1.1] START` (drained) before and after flipping a
 setting in the official app — a reliable way to locate any unknown register.
 
-| Address | Setting | Values |
-|---|---|---|
+| Address  | Setting                                                           | Values             |
+|----------|-------------------------------------------------------------------|--------------------|
 | `[1.20]` | Auto-off on motion inactivity (`SettingsMotionInactivityAutoOff`) | `01` on / `00` off |
-| `[1.29]` | Auto transparency (pass-through while only one bud is worn) | `01` on / `00` off |
-| `[1.30]` | `SettingsSourceBargeIn` — reads `00`, refuses writes, see §14 | — |
-| `[1.34]` | Touch controls master enable | `01` on / `00` off |
+| `[1.29]` | Auto transparency (pass-through while only one bud is worn)       | `01` on / `00` off |
+| `[1.30]` | `SettingsSourceBargeIn` — reads `00`, refuses writes, see §14     | —                  |
+| `[1.34]` | Touch controls master enable                                      | `01` on / `00` off |
 
 `[1.20]` and `[1.30]` were named from the official app's `BmapFunction` enum,
 which lists every Settings id and also confirms `[1.29]` = `SettingsAutoAwareMode`
@@ -200,12 +200,12 @@ The earbuds use **AVRCP absolute volume**, so the Android media-stream volume
 Ruled out experimentally: with music playing, the phone volume was driven
 11 → 2 → 11 while every candidate register was polled.
 
-| Address | Value | Verdict |
-|---|---|---|
-| `[5.3]` | `1f` | Constant — supported-controls mask |
-| `[5.4]` | `0100xx` | ~1 Hz counter (playback clock); errors when idle |
-| `[5.5]` | `1f0e` | Never changed with volume; errors when idle |
-| `[5.7]`, `[5.13]` | drifting | Latency/codec values, change on their own |
+| Address           | Value    | Verdict                                          |
+|-------------------|----------|--------------------------------------------------|
+| `[5.3]`           | `1f`     | Constant — supported-controls mask               |
+| `[5.4]`           | `0100xx` | ~1 Hz counter (playback clock); errors when idle |
+| `[5.5]`           | `1f0e`   | Never changed with volume; errors when idle      |
+| `[5.7]`, `[5.13]` | drifting | Latency/codec values, change on their own        |
 
 `[5.2]` and `[5.6]` answer a GET with error 5, but that is the wrong operator,
 not auth: **`GetAll [5.2] START` works** and drains `[5.0] [5.1] [5.3] [5.4]
@@ -236,10 +236,10 @@ The official app subscribes first, via `NotificationByFblock`:
 [9.2] SETGET  [bitmask][function-block bitset]
 ```
 
-| Byte | Meaning |
-|---|---|
-| 0 | `NotificationBitmask`: 0 = Overwrite, 1 = Enable, 2 = Disable |
-| 1-4 | Function-block bitset, big-endian, **bit index = function block id** |
+| Byte | Meaning                                                              |
+|------|----------------------------------------------------------------------|
+| 0    | `NotificationBitmask`: 0 = Overwrite, 1 = Enable, 2 = Disable        |
+| 1-4  | Function-block bitset, big-endian, **bit index = function block id** |
 
 Bit indexing is by *block id*, not enum ordinal — `FunctionBlocksBitSet.setBit`
 uses `getFunctionBlockId()`, so AudioModes (31) is the top bit of a 4-byte mask.
@@ -264,13 +264,13 @@ PUSH [31.10] op=3: 0000020001    # head tracking -> Motion
 
 The Notification block functions:
 
-| Address | Name |
-|---|---|
-| `[9.0]` | FblockInfo |
-| `[9.1]` | **NotificationReset** — clears subscriptions; not a GetAll |
-| `[9.2]` | NotificationByFblock |
+| Address | Name                                                             |
+|---------|------------------------------------------------------------------|
+| `[9.0]` | FblockInfo                                                       |
+| `[9.1]` | **NotificationReset** — clears subscriptions; not a GetAll       |
+| `[9.2]` | NotificationByFblock                                             |
 | `[9.3]` | NotificationByFunction — `[bitmask][fblock id][function bitset]` |
-| `[9.4]` | NotificationPeriodic |
+| `[9.4]` | NotificationPeriodic                                             |
 
 A plain `GET [9.2]` returns the currently subscribed mask (`00000000` when
 nothing is subscribed), which makes it easy to confirm registration took.
@@ -305,11 +305,11 @@ pushes one frame down it. The official Bose app has no runtime part in this — 
 only role is writing `[1.9]`, and its "Spotify" option is gated purely on
 `isPackageInstalled("com.spotify.music")`, which the firmware knows nothing about.
 
-| SDP | Value |
-|---|---|
-| Service UUID | `9b26d8c0-a8ed-440b-95b0-c4714a518bcc` |
-| SDP service name | `SRfcomm` |
-| RFCOMM channel | 24 on this unit — read it from SDP, do not hardcode |
+| SDP              | Value                                               |
+|------------------|-----------------------------------------------------|
+| Service UUID     | `9b26d8c0-a8ed-440b-95b0-c4714a518bcc`              |
+| SDP service name | `SRfcomm`                                           |
+| RFCOMM channel   | 24 on this unit — read it from SDP, do not hardcode |
 
 The press frame is 82 bytes, NUL-separated strings after a 2-byte header:
 
@@ -416,22 +416,22 @@ are from this unit.
 
 GET sweep of block 4:
 
-| Address | Name | GET result |
-|---|---|---|
-| `[4.0]` | FblockInfo | `"1.1.0"` |
-| `[4.1]` | Connect | STATUS `000003` |
-| `[4.2]` | Disconnect | error 5 — GET is not a valid operator, **START works** |
-| `[4.3]` | RemoveDevice | error 5 — START presumably works, untested |
-| `[4.4]` | ListDevices | STATUS, see below |
-| `[4.5]` | Info | error 6 without a payload; takes a MAC |
-| `[4.6]` | ExtendedInfo | error 6 without a payload; takes a MAC |
-| `[4.7]` | ClearDeviceList | error 5 |
-| `[4.8]` | PairingMode | STATUS `00` |
-| `[4.9]` | AppAddress | STATUS = MAC of the device running the app |
-| `[4.14]` | Features | STATUS `01` — capability bits, see below |
-| `[4.15]` | BoseProduct | error 1 (Length) — takes a payload |
-| `[4.18]` | AvailableToConnect | STATUS `01` |
-| `[4.10-13]`, `[4.16]`, `[4.17]`, `[4.19]` | P2p, Routing, ConnectionPriority, UserCarouselSelect, LeAudioCheck | error 4, not supported |
+| Address                                   | Name                                                               | GET result                                             |
+|-------------------------------------------|--------------------------------------------------------------------|--------------------------------------------------------|
+| `[4.0]`                                   | FblockInfo                                                         | `"1.1.0"`                                              |
+| `[4.1]`                                   | Connect                                                            | STATUS `000003`                                        |
+| `[4.2]`                                   | Disconnect                                                         | error 5 — GET is not a valid operator, **START works** |
+| `[4.3]`                                   | RemoveDevice                                                       | error 5 — START presumably works, untested             |
+| `[4.4]`                                   | ListDevices                                                        | STATUS, see below                                      |
+| `[4.5]`                                   | Info                                                               | error 6 without a payload; takes a MAC                 |
+| `[4.6]`                                   | ExtendedInfo                                                       | error 6 without a payload; takes a MAC                 |
+| `[4.7]`                                   | ClearDeviceList                                                    | error 5                                                |
+| `[4.8]`                                   | PairingMode                                                        | STATUS `00`                                            |
+| `[4.9]`                                   | AppAddress                                                         | STATUS = MAC of the device running the app             |
+| `[4.14]`                                  | Features                                                           | STATUS `01` — capability bits, see below               |
+| `[4.15]`                                  | BoseProduct                                                        | error 1 (Length) — takes a payload                     |
+| `[4.18]`                                  | AvailableToConnect                                                 | STATUS `01`                                            |
+| `[4.10-13]`, `[4.16]`, `[4.17]`, `[4.19]` | P2p, Routing, ConnectionPriority, UserCarouselSelect, LeAudioCheck | error 4, not supported                                 |
 
 bosectl's block-4 list (`NOTES.md`) omits `[4.5]` and `[4.6]`, which do exist —
 one more reason not to trust it. Its `[4.12]` label "switch active multipoint
@@ -526,11 +526,11 @@ block-31 auth pattern into it.
 The official app parses `[4.14]`'s single byte as three booleans
 (`messages/models/devicemanagement/FeatureInfo`):
 
-| Bit | Capability | This unit (`01`) |
-|---|---|---|
-| 0 | `cTKDSupported` | yes |
-| 1 | `deviceCarouselSupported` | **no** |
-| 2 | `sourceBargeInSupported` | **no** |
+| Bit | Capability                | This unit (`01`) |
+|-----|---------------------------|------------------|
+| 0   | `cTKDSupported`           | yes              |
+| 1   | `deviceCarouselSupported` | **no**           |
+| 2   | `sourceBargeInSupported`  | **no**           |
 
 Read this register before implementing anything source-related — it is the
 firmware telling you up front which of the mechanisms below exist.
