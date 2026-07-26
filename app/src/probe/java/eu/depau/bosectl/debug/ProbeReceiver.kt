@@ -34,6 +34,10 @@ class ProbeReceiver : BroadcastReceiver() {
                         "notify" -> notifyProbe(label)
                         "subscribe" -> subscribeProbe(label)
                         "notifystart" -> notifyStartProbe(label)
+                        "ble" -> BleProbe(context, label)
+                            .run(intent.getIntExtra("mtu", 23))
+                        "bleoffline" -> BleProbe(context, label)
+                            .runOffline(intent.getIntExtra("mtu", 23))
                         else -> probe()
                     }
                 }

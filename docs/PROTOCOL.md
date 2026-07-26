@@ -634,34 +634,59 @@ RX 00 00 07 03 11 30 38 36 32 …        [0.7] STATUS <serial> — reassembled
 
 A 25-address GET sweep on the **unsecure** characteristic without any LE bond:
 
-| Address | Result |
-|---------|--------|
-| `[0.1]` bmap version | `STATUS "1.2.0"` |
-| `[0.2]` all fblocks | `STATUS 8f cc 23 ff` |
-| `[4.14]` features | `STATUS 00` |
+| Address                     | Result                                 |
+|-----------------------------|----------------------------------------|
+| `[0.1]` bmap version        | `STATUS "1.2.0"`                       |
+| `[0.2]` all fblocks         | `STATUS 8f cc 23 ff`                   |
+| `[4.14]` features           | `STATUS 00`                            |
 | `[1.1] [2.1] [31.1]` GetAll | error 5 — wrong operator, as on RFCOMM |
-| `[2.10]` in-ear | error 4 `FuncNotSupp` |
-| everything else | **error 20 `InsecureTransport`** |
+| `[2.10]` in-ear             | error 4 `FuncNotSupp`                  |
+| everything else             | **error 20 `InsecureTransport`**       |
 
 Reads are unauthenticated over RFCOMM; over BLE the firmware requires an
 encrypted link for all of it, including `[9.2]`. So the unsecure characteristic is
 only good for the pre-pairing setup the app uses it for (`defpackage/P20`
 BLE-connects with `forceUnsecureCharacteristic` purely to read the static MAC).
 
-### Bonding needs pairing mode, and then the whole register set works
+### What unlocks it is an encrypted link — and the classic bond already provides one
 
-`Device1.Pair()` on the rotating random address fails with
-`org.bluez.Error.AuthenticationFailed` — SMP is rejected before any agent prompt,
-with or without an existing connection. **In pairing mode the earbuds advertise
-their identity (public) address instead of a random one**, and bonding to that
-succeeds. Pairing mode is visible in the advertisement: manufacturer data (company
-`0x009E`) value byte 2 bit 3, per `SpitfireAdvertisingPacket.getInPairingMode`.
+`[4.14]` bit 0 `cTKDSupported` is set on this unit (§14), i.e. the firmware does
+cross-transport key derivation: pairing over BR/EDR also yields an LE long-term
+key. So a host that is classic-bonded needs **no LE pairing at all** — its LE
+link comes up encrypted and the secure characteristic works.
 
-On the bonded link, the secure characteristic answers exactly like RFCOMM
-(`[0.5]` firmware `8.4.8+gbb2cb60`, `[0.3]` `40 62 05`, `[1.9]` one STATUS per
-button, `[2.2]` the repeating 4-byte battery groups of §2, `[4.4]` the device
-list of §14). Only `[1.1]`/`[2.1]`/`[31.1]` (error 5) and `[2.10]` (error 4)
-differ from nothing — they fail the same way on RFCOMM.
+Confirmed from Android, which is the only side that can prove it, because it can
+pin the transport:
+
+```kotlin
+device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+```
+
+With `bondState = BONDED`, `type = DEVICE_TYPE_DUAL` and no LE pairing, the
+secure characteristic `c65b8f2f-…` answered the full register set — `[0.1]`
+`"1.2.0"`, `[0.7]` serial, `[2.2]` the repeating battery groups of §2, `[1.10]`
+`07`, `[31.3]`, `[31.10]`, `[5.1]` active source, `[4.4]` the device list of §14,
+`[9.2]` mask. Only `[1.1]`/`[2.1]`/`[31.1]` (error 5) and `[2.10]` (error 4) fail,
+exactly as they do on RFCOMM.
+
+**BlueZ cannot run this experiment.** It has no per-transport connect: `Connect()`
+picks BR/EDR for a device that has a classic pairing, and `ConnectProfile()` is
+BR/EDR-only (`org.bluez.Error.BREDR.ProfileUnavailable` for a GATT UUID). A
+successful sweep from Linux on the device's public address while the classic link
+was up therefore proves nothing about LE — it was most likely GATT over BR/EDR.
+Its `Connected`/`ServicesResolved` refer to the classic link, and the GATT
+objects can be a stale cache; the giveaway is `WriteValue` failing with
+`org.bluez.Error.Failed: Not connected` while `Connected` reads true.
+
+Attempting an actual *LE* bond from BlueZ failed
+(`org.bluez.Error.AuthenticationFailed`, SMP rejected before any agent prompt)
+until the earbuds were in pairing mode — and what succeeded then was very likely
+just a classic re-bond, since BlueZ merged it into the existing BR/EDR device
+object. Pairing mode is visible in the advertisement: manufacturer data (company
+`0x009E`) value byte 2 bit 3, per `SpitfireAdvertisingPacket.getInPairingMode`,
+and **in pairing mode the earbuds advertise their identity (public) address**
+instead of a random one. While connected to another host they were also seen
+advertising the identity address, so a client need not resolve private addresses.
 
 ### Advertisement identifies the product
 
@@ -671,10 +696,62 @@ then a byte holding `bleProductId` in bits 0-4 and variant in bits 5-7. BMAP
 Observed `00 a8 06 …` → format 0, id `100 + 8 = 108` = `Edith` = QC Ultra 2
 Earbuds, variant 5. Then prand (3 bytes) and Bose's resolvable MAC (3 bytes).
 
-`ponytail:` untested over BLE — whether the firmware segments *notifications*
-down to 20 bytes when the MTU is 23. BlueZ negotiates a large MTU and does not
-expose a way to force the minimum, so a GATT client that cannot negotiate MTU
-(Connect IQ, for one) may see truncated pushes.
+### BLE control works with no classic link at all — audio can live elsewhere
+
+This is the practical payoff: **a bonded phone can talk BMAP over BLE while the
+earbuds are connected to a different host for audio.** Captured with the earbuds
+playing to the laptop and the phone holding no classic link whatsoever:
+
+```
+[4.4] STATUS 01 5cf3709b8cff 088bc851d48d …   mask 01 -> only the laptop connected
+[4.5] (the phone, 088bc851d48d, is in the list but not connected)
+[5.1] STATUS 000f01 5cf3709b8cff             active source is the laptop
+```
+
+From that state, every register answered over the LE link — `[4.9]`, `[2.2]`,
+`[31.3]`, `[4.4]`, `[5.1]` — for the whole 25 s test, with `Connected` on the
+classic transport false the entire time. So the app does not need to own the audio
+link to read state or issue commands; the LE link is enough, and it is independent
+of who is playing.
+
+Two details worth keeping:
+
+- `[4.2] START` with the phone's *own* MAC (from `[4.9]`) is accepted even when
+  that device is not connected — `PROCESSING [0x21, mac]` then `RESULT [mac]`.
+- `[4.1] START` afterwards reconnected the phone (mask `01` → `03`) and, exactly
+  as §14 says, **did not** move the audio: `[5.1]` still named the laptop.
+
+The LE link also survived the classic disconnect it triggered, so a client does
+not need to re-establish GATT when the audio link comes and goes.
+
+### Reproducing: the BLE probe
+
+The `probe` flavor carries a GATT client that does the above (`debug/BleProbe.kt`):
+
+```bash
+# read-only sweep over the LE link
+adb shell am broadcast -a eu.depau.bosectl.PROBE -p eu.depau.bosectl \
+    --es mode ble --es label LE --ei mtu 23
+
+# same, but drops this phone's own classic link first ([4.2]) and restores it
+# ([4.1]) — proves control without audio. Interrupts playback for ~30s.
+adb shell am broadcast -a eu.depau.bosectl.PROBE -p eu.depau.bosectl \
+    --es mode bleoffline --es label OFFLINE
+
+adb logcat -d -s BmapProbe
+```
+
+`mode ble` is read-only. Both log the whole GATT database, the granted MTU, every
+raw notification and the reassembled BMAP frames.
+
+`ponytail:` still untested — whether the firmware segments *notifications* down to
+20 bytes at an MTU of 23. **Neither side can force it:** BlueZ negotiates a large
+MTU with no override, and Android's stack ignored `requestMtu(23)` and granted
+
+247. Observed behaviour at MTU 247 is that the device does *not* segment — a
+     36-byte `[4.4]` reply arrived as one notification with segment header `0x00`. A
+     GATT client that cannot negotiate MTU (Connect IQ, for one) may therefore see
+     truncated pushes; test that on the client itself.
 
 ---
 
