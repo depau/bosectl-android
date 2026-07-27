@@ -31,13 +31,15 @@ CURL = os.environ.get("CURL", "curl").split()
 # Outlined weight-400 symbols -> ic_<name>.xml
 ICONS = [
     "add", "arrow_back", "arrow_forward", "battery_std", "bedtime",
-    "bluetooth", "bluetooth_disabled", "blur_on", "call", "directions_bike",
+    "bluetooth", "bluetooth_connected", "bluetooth_disabled",
+    "bluetooth_searching", "blur_on", "call", "directions_bike",
     "directions_bus", "directions_car", "directions_run", "directions_walk",
     "earbud_case", "earbud_left", "earbud_right", "earbuds_2", "edit",
     "fitness_center", "flight", "forum", "headphones", "hearing", "hiking",
     "home", "landscape", "lightbulb", "link_off", "local_airport", "lock",
-    "menu_book", "movie", "music_note", "noise_aware", "noise_control_off",
-    "noise_control_on", "podcasts", "school", "self_improvement", "settings",
+    "media_bluetooth_on", "menu_book", "movie", "music_note", "noise_aware",
+    "noise_control_off", "noise_control_on", "podcasts", "school",
+    "self_improvement", "settings",
     "spa", "spatial_audio", "spatial_audio_off", "spatial_tracking",
     "speaker_group", "star", "surround_sound", "touch_app", "tune",
     "visibility", "volume_down", "volume_off", "volume_up", "work",

@@ -20,7 +20,11 @@ object AppIcons {
     val ArrowForward: ImageVector @Composable get() = res(R.drawable.ic_arrow_forward)
     val BatteryStd: ImageVector @Composable get() = res(R.drawable.ic_battery_std)
     val Bluetooth: ImageVector @Composable get() = res(R.drawable.ic_bluetooth)
+    val BluetoothConnected: ImageVector
+        @Composable get() = res(R.drawable.ic_bluetooth_connected)
     val BluetoothDisabled: ImageVector @Composable get() = res(R.drawable.ic_bluetooth_disabled)
+    val BluetoothSearching: ImageVector
+        @Composable get() = res(R.drawable.ic_bluetooth_searching)
     val EarbudCase: ImageVector @Composable get() = res(R.drawable.ic_earbud_case)
     val EarbudLeft: ImageVector @Composable get() = res(R.drawable.ic_earbud_left)
     val EarbudRight: ImageVector @Composable get() = res(R.drawable.ic_earbud_right)
@@ -29,6 +33,8 @@ object AppIcons {
     val Hearing: ImageVector @Composable get() = res(R.drawable.ic_hearing)
     val LinkOff: ImageVector @Composable get() = res(R.drawable.ic_link_off)
     val Lock: ImageVector @Composable get() = res(R.drawable.ic_lock)
+    val MediaBluetoothOn: ImageVector
+        @Composable get() = res(R.drawable.ic_media_bluetooth_on)
     val NoiseControlOff: ImageVector @Composable get() = res(R.drawable.ic_noise_control_off)
     val NoiseControlOn: ImageVector @Composable get() = res(R.drawable.ic_noise_control_on)
     val Settings: ImageVector @Composable get() = res(R.drawable.ic_settings)

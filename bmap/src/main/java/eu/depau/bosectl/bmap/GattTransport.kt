@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.sync.Mutex
@@ -34,6 +35,8 @@ private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 private const val PREFERRED_MTU = 247
 
 private const val CONNECT_TIMEOUT_MS = 20_000L
+private const val CONNECT_ROUNDS = 3
+private const val CONNECT_RETRY_DELAY_MS = 1200L
 private const val SETUP_TIMEOUT_MS = 10_000L
 private const val WRITE_TIMEOUT_MS = 5_000L
 private const val FIRST_RESPONSE_TIMEOUT_MS = 3000L
@@ -294,6 +297,26 @@ class GattTransport private constructor(
          * developed from Linux (PROTOCOL.md §15).
          */
         suspend fun connect(context: Context, device: BluetoothDevice): GattTransport {
+            // Like RFCOMM (§1), the earbuds refuse a fresh link for a moment
+            // after one tears down: the connection is accepted and then dropped
+            // mid-setup, surfacing as a CCCD write failing with status 133.
+            var lastError: Throwable? = null
+            repeat(CONNECT_ROUNDS) { round ->
+                if (round > 0) delay(CONNECT_RETRY_DELAY_MS)
+                try {
+                    return connectOnce(context, device)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "LE connect attempt ${round + 1} failed: ${e.message}")
+                    lastError = e
+                }
+            }
+            throw lastError ?: BmapConnectionException("LE connect to ${device.address} failed")
+        }
+
+        private suspend fun connectOnce(
+            context: Context,
+            device: BluetoothDevice,
+        ): GattTransport {
             val session = Session()
             val gatt = device.connectGatt(
                 context, false, session, BluetoothDevice.TRANSPORT_LE

@@ -48,6 +48,7 @@ import eu.depau.bosectl.R
 import eu.depau.bosectl.data.CachedMode
 import eu.depau.bosectl.data.Prefs
 import eu.depau.bosectl.data.dataStore
+import eu.depau.bosectl.data.LinkLayer
 import eu.depau.bosectl.data.decodeCachedModes
 import eu.depau.bosectl.ui.MainActivity
 import eu.depau.bosectl.ui.promptDrawable
@@ -131,6 +132,8 @@ class BoseWidget : GlanceAppWidget() {
         val wideChips = size.width >= CHIP_ICON_MIN_WIDTH
 
         val connected = prefs?.get(Prefs.CACHE_CONNECTED) ?: false
+        val link = prefs?.get(Prefs.CACHE_LINK)
+        val playingHere = prefs?.get(Prefs.CACHE_PLAYING_HERE) ?: false
         val deviceName = prefs?.get(Prefs.CACHE_DEVICE_NAME) ?: "Bose Control"
         val battery = Battery(
             left = prefs?.get(Prefs.CACHE_BAT_LEFT),
@@ -152,7 +155,7 @@ class BoseWidget : GlanceAppWidget() {
                 .cornerRadius(24.dp)
                 .padding(horizontal = HORIZONTAL_PADDING, vertical = VERTICAL_PADDING),
         ) {
-            Header(deviceName, battery, connected)
+            Header(deviceName, battery, connected, link, playingHere)
 
             if (starred.isEmpty()) {
                 Text(
@@ -252,8 +255,49 @@ class BoseWidget : GlanceAppWidget() {
         }
     }
 
+    /**
+     * How the app is talking to the earbuds, in one glyph.
+     *
+     * Replaces the old "Disconnected" label, which was both wrong (over LE the
+     * earbuds are connected — just not to us for audio) and wider than the
+     * battery cells could spare.
+     *
+     * | Glyph                | Meaning                                     |
+     * |----------------------|---------------------------------------------|
+     * | `bluetooth_disabled` | no BMAP link at all                         |
+     * | `media_bluetooth_on` | the earbuds are playing *this* phone         |
+     * | `bluetooth_searching`| LE link; audio is elsewhere or not playing  |
+     * | `bluetooth_connected`| classic link; connected but not playing here |
+     */
     @Composable
-    private fun Header(name: String, battery: Battery, connected: Boolean) {
+    private fun LinkStatusIcon(connected: Boolean, link: String?, playingHere: Boolean) {
+        val (icon, description) = when {
+            !connected -> R.drawable.ic_bluetooth_disabled to "Disconnected"
+            playingHere -> R.drawable.ic_media_bluetooth_on to "Playing on this phone"
+            link == LinkLayer.LE.id -> R.drawable.ic_bluetooth_searching to
+                "Connected over Bluetooth LE"
+            else -> R.drawable.ic_bluetooth_connected to "Connected over Bluetooth"
+        }
+        Image(
+            provider = ImageProvider(icon),
+            contentDescription = description,
+            colorFilter = ColorFilter.tint(
+                if (connected) GlanceTheme.colors.primary
+                else GlanceTheme.colors.onSurfaceVariant
+            ),
+            modifier = GlanceModifier.size(16.dp),
+        )
+        if (connected) Spacer(GlanceModifier.width(6.dp))
+    }
+
+    @Composable
+    private fun Header(
+        name: String,
+        battery: Battery,
+        connected: Boolean,
+        link: String?,
+        playingHere: Boolean,
+    ) {
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
@@ -279,15 +323,8 @@ class BoseWidget : GlanceAppWidget() {
                 maxLines = 1,
                 modifier = GlanceModifier.defaultWeight(),
             )
-            if (!connected) {
-                Text(
-                    "Disconnected",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp
-                    ),
-                    maxLines = 1,
-                )
-            } else {
+            LinkStatusIcon(connected, link, playingHere)
+            if (connected) {
                 BatteryCell(R.drawable.ic_earbud_left, battery.left)
                 BatteryCell(R.drawable.ic_earbud_right, battery.right)
                 BatteryCell(R.drawable.ic_earbud_case, battery.case)

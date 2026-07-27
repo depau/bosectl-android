@@ -743,6 +743,39 @@ adb logcat -d -s BmapProbe
 `mode ble` is read-only. Both log the whole GATT database, the granted MTU, every
 raw notification and the reassembled BMAP frames.
 
+### An idle LE link is hung up after ~40 s, and reconnects need a moment
+
+Two behaviours that only show up once you try to *hold* an LE link rather than
+run a probe over it:
+
+**Idle timeout.** With `[9.2]` subscribed there is nothing to send, and a silent
+link is reaped by the earbuds after roughly 40 seconds:
+
+```
+19:40:12  connectionState status=0  newState=2    connected, MTU 247
+19:40:13  notifications enabled, refresh done
+19:40:54  connectionState status=19 newState=0    41 s later, nothing sent
+```
+
+`status=19` is `GATT_CONN_TERMINATE_PEER_USER` — the *earbuds* hung up, not the
+phone and not the stack. A GET every 20 s prevents it: the same link then stayed
+up for 150 s and counting. `[0.1]` BMAP version is the natural keepalive — a
+constant string that reads nothing and changes nothing.
+
+**Reconnects are refused right after a teardown**, exactly as §1 documents for
+RFCOMM. The connection is accepted and then dropped mid-setup, which surfaces as
+a CCCD write failing with status 133:
+
+```
+19:40:59  newState=2                     connected
+19:41:00  status=19 newState=0           dropped ~1 s in
+19:41:00  CCCD write failed (status=133)
+```
+
+Three rounds with ~1.2 s gaps clears it, mirroring the RFCOMM retry. Note the
+diagnosis rules out contention: `dumpsys bluetooth_manager` showed no GATT client
+for `com.bose.bosemusic` at the time, only ours.
+
 ### What the app does with it
 
 Verified on-device over LE, no classic link involved: the `[9.2]` subscription

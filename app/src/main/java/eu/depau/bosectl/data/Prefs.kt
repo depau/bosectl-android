@@ -46,6 +46,12 @@ object Prefs {
     val CACHE_ANC = booleanPreferencesKey("cache_anc")
     val CACHE_CNC = intPreferencesKey("cache_cnc")
     val CACHE_TOUCH = booleanPreferencesKey("cache_touch")
+
+    /** [LinkLayer.id] of the live connection, so the widget can show which link. */
+    val CACHE_LINK = stringPreferencesKey("cache_link")
+
+    /** Whether the earbuds are playing *this* phone, per [5.1]. */
+    val CACHE_PLAYING_HERE = booleanPreferencesKey("cache_playing_here")
 }
 
 /** A starred mode as cached for the widget. */

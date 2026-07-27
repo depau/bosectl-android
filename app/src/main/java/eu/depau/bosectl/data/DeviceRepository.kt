@@ -19,6 +19,7 @@ import eu.depau.bosectl.bmap.ModeConfig
 import eu.depau.bosectl.bmap.Op
 import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.bmap.Spatial
+import eu.depau.bosectl.bmap.bmapPacket
 import eu.depau.bosectl.bmap.parseActiveSource
 import eu.depau.bosectl.bmap.parseAudioSettings
 import eu.depau.bosectl.bmap.parseBattery
@@ -56,6 +57,9 @@ private const val AUTO_CONNECT_BUDGET_MS = 8_000L
 
 /** How often to notice that an LE link died. Costs no radio traffic. */
 private const val LINK_WATCHDOG_MS = 15_000L
+
+/** Comfortably inside the ~40s idle timeout the earbuds enforce on an LE link. */
+private const val LE_KEEPALIVE_MS = 20_000L
 
 data class BoseState(
     val connected: Boolean = false,
@@ -100,6 +104,19 @@ data class BoseState(
             compareByDescending<PairedDevice> { it.isLocalDevice }
                 .thenByDescending { it.mac == activeSourceMac }
         )
+
+    /** This phone's entry in the earbuds' device list — `isLocalDevice` in [4.5]. */
+    private val localDevice: PairedDevice?
+        get() = pairedDevices.firstOrNull { it.isLocalDevice }
+
+    /**
+     * Is this phone the device the earbuds are actually playing, per [5.1]?
+     *
+     * Distinct from "has an audio link": with multipoint the phone can be
+     * connected while a laptop holds the audio (§14).
+     */
+    val playingHere: Boolean
+        get() = activeSourceMac != null && activeSourceMac == localDevice?.mac
 }
 
 /**
@@ -116,6 +133,7 @@ object DeviceRepository {
     private var unsolicitedJob: Job? = null
     private var pollJob: Job? = null
     private var watchdogJob: Job? = null
+    private var keepaliveJob: Job? = null
 
     @Volatile
     private var lastAutoConnectAt = 0L
@@ -215,6 +233,7 @@ object DeviceRepository {
                 // the subscription.
                 if (!notificationsActive) startPolling()
                 startLinkWatchdog()
+                startKeepalive(link)
                 conn
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
@@ -228,6 +247,7 @@ object DeviceRepository {
     fun disconnect() {
         stopPolling()
         stopLinkWatchdog()
+        stopKeepalive()
         unsolicitedJob?.cancel()
         unsolicitedJob = null
         connection?.close()
@@ -319,6 +339,34 @@ object DeviceRepository {
     private fun stopLinkWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = null
+    }
+
+    /**
+     * The earbuds hang up an idle LE link after ~40 s — `newState=0` with
+     * `status=19`, `GATT_CONN_TERMINATE_PEER_USER`. Once `[9.2]` is subscribed we
+     * have nothing to send, so a quiet link gets reaped and the widget goes stale.
+     *
+     * So poke it with the most inert GET there is: `[0.1]` BMAP version is a
+     * constant string, reads nothing, and changes nothing.
+     *
+     * Classic needs none of this — that link is held up by the audio connection.
+     */
+    private fun startKeepalive(link: LinkLayer) {
+        stopKeepalive()
+        if (link != LinkLayer.LE) return
+        keepaliveJob = scope.launch {
+            while (true) {
+                delay(LE_KEEPALIVE_MS)
+                val conn = connection?.takeIf { it.isConnected } ?: return@launch
+                runCatching { conn.raw(bmapPacket(0, 1, Op.GET)) }
+                    .onFailure { Log.d(TAG, "Keepalive failed: ${it.message}") }
+            }
+        }
+    }
+
+    private fun stopKeepalive() {
+        keepaliveJob?.cancel()
+        keepaliveJob = null
     }
 
     /** Was a matching advertisement seen recently enough to bother connecting? */
@@ -739,6 +787,8 @@ object DeviceRepository {
         val s = _state.value
         context.dataStore.edit { prefs ->
             prefs[Prefs.CACHE_CONNECTED] = s.connected
+            prefs[Prefs.CACHE_PLAYING_HERE] = s.playingHere
+            s.link?.let { prefs[Prefs.CACHE_LINK] = it.id }
             s.deviceName?.let { prefs[Prefs.CACHE_DEVICE_NAME] = it }
             s.currentModeIdx?.let { prefs[Prefs.CACHE_CURRENT_MODE] = it }
             s.audioSettings?.let {
