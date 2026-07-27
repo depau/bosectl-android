@@ -61,6 +61,9 @@ private const val LINK_WATCHDOG_MS = 15_000L
 /** Comfortably inside the ~40s idle timeout the earbuds enforce on an LE link. */
 private const val LE_KEEPALIVE_MS = 20_000L
 
+/** A failed LE-to-classic switch lands back on LE; don't retry it in a tight loop. */
+private const val LINK_UPGRADE_RETRY_MS = 60_000L
+
 data class BoseState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -137,6 +140,9 @@ object DeviceRepository {
 
     @Volatile
     private var lastAutoConnectAt = 0L
+
+    @Volatile
+    private var lastUpgradeAt = 0L
     private var visibleScreens = 0
     private var notificationsActive = false
 
@@ -268,7 +274,37 @@ object DeviceRepository {
 
     /** Explicit connect (ACL receiver, device picker, Connect button). */
     fun onDeviceAppeared() = runAsync {
+        // Already on LE when the classic link comes up? Move over to it.
+        if (state.value.link == LinkLayer.LE) upgradeToClassicIfAvailable()
         ensureConnected()
+        refresh()
+    }
+
+    /**
+     * Move an LE connection onto the classic link once one exists.
+     *
+     * A2DP cannot play without a classic link, so the moment this phone holds the
+     * audio, RFCOMM is available and free — and it is the better carrier: the
+     * proven path, and it needs no keepalive, unlike LE which the earbuds hang up
+     * after ~40 s of silence (§15).
+     *
+     * This never *initiates* classic: it is guarded on the ACL already being up,
+     * so it cannot take the audio from another device.
+     */
+    private suspend fun upgradeToClassicIfAvailable() {
+        if (state.value.link != LinkLayer.LE) return
+        if (linkPreference() == LinkPreference.LE_ONLY) return
+        if (!isAclUp()) return
+        // Throttled so a failed switch (which lands back on LE) can't loop.
+        val now = System.currentTimeMillis()
+        if (now - lastUpgradeAt < LINK_UPGRADE_RETRY_MS) return
+        lastUpgradeAt = now
+
+        Log.i(TAG, "Classic link is up; moving BMAP off LE")
+        // Briefly disconnected: the alternative is holding two live transports,
+        // which is a lot of machinery to avoid one second of "connecting".
+        disconnect()
+        ensureConnected(automatic = true)
         refresh()
     }
 
@@ -681,6 +717,15 @@ object DeviceRepository {
                     _state.value = s.copy(activeSourceMac = it)
                 }
             else -> return
+        }
+        // The audio picture just changed; if this phone now holds it, the classic
+        // link exists and LE is no longer the only option. On its own coroutine:
+        // the switch closes this very transport, which would otherwise cancel the
+        // collector we are running in.
+        if (packet.matches(BmapConnection.Addr.ACTIVE_SOURCE) ||
+            packet.matches(BmapConnection.Addr.DEV_LIST)
+        ) {
+            runAsync { upgradeToClassicIfAvailable() }
         }
         persistWidgetCache()
     }

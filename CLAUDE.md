@@ -59,7 +59,15 @@ same packets — the only difference is BLE's one-byte segmentation header
 `data/LinkLayer.kt` holds the choice: `linkOrder()` decides, `openTransport()`
 builds. **Never let the app initiate a classic connection**: RFCOMM to an idle
 device steals the audio from whatever is playing, so `AUTO` only reaches for
-classic when the link is already up, and LE otherwise.
+classic when the link is already up, and LE otherwise. `linkOrder(automatic =
+true)` enforces that for every connect the user did not explicitly ask for.
+
+The pairing is asymmetric on purpose: LE reaches the earbuds when they are
+playing to someone else, but the firmware hangs up an idle LE link after ~40 s,
+so it needs a keepalive. Classic needs none — the audio connection holds it up.
+So `upgradeToClassicIfAvailable()` moves an LE connection over as soon as a
+classic link exists (this phone started holding the audio), and presence-driven
+LE connects cover the rest.
 
 Presentation stays out of `:bmap`, and `:app` never hand-builds packets.
 
