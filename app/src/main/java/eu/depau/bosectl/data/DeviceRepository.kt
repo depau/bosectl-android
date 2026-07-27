@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "DeviceRepository"
 private const val POLL_FOREGROUND_MS = 2000L
@@ -46,6 +47,15 @@ private const val POLL_BACKGROUND_MS = 10000L
 
 /** Give up spinning on a connect/disconnect that never reports back. */
 private const val DEVICE_ACTION_TIMEOUT_MS = 20_000L
+
+/** Advertisements arrive every few seconds; don't retry a failed connect that often. */
+private const val AUTO_CONNECT_RETRY_MS = 60_000L
+
+/** A broadcast receiver is held open across this, so keep it short. */
+private const val AUTO_CONNECT_BUDGET_MS = 8_000L
+
+/** How often to notice that an LE link died. Costs no radio traffic. */
+private const val LINK_WATCHDOG_MS = 15_000L
 
 data class BoseState(
     val connected: Boolean = false,
@@ -105,6 +115,10 @@ object DeviceRepository {
     private var connection: BmapConnection? = null
     private var unsolicitedJob: Job? = null
     private var pollJob: Job? = null
+    private var watchdogJob: Job? = null
+
+    @Volatile
+    private var lastAutoConnectAt = 0L
     private var visibleScreens = 0
     private var notificationsActive = false
 
@@ -144,8 +158,9 @@ object DeviceRepository {
      */
     private suspend fun openFirstWorkingTransport(
         device: BluetoothDevice,
+        automatic: Boolean,
     ): Pair<BmapTransport, LinkLayer> {
-        val order = linkOrder(linkPreference(), classicLinkUp = isAclUp())
+        val order = linkOrder(linkPreference(), classicLinkUp = isAclUp(), automatic = automatic)
         var lastError: Exception? = null
         for (link in order) {
             try {
@@ -160,51 +175,59 @@ object DeviceRepository {
         throw lastError ?: BmapException("No usable link to ${device.address}")
     }
 
-    /** Connect if not already connected. Throws BmapException on failure. */
-    suspend fun ensureConnected(): BmapConnection = connectMutex.withLock {
-        connection?.takeIf { it.isConnected }?.let { return it }
-        connection?.close()
-        connection = null
+    /**
+     * Connect if not already connected. Throws BmapException on failure.
+     *
+     * [automatic] must be true for anything the user did not explicitly ask for
+     * — it forbids initiating a classic link. See [linkOrder].
+     */
+    suspend fun ensureConnected(automatic: Boolean = false): BmapConnection =
+        connectMutex.withLock {
+            connection?.takeIf { it.isConnected }?.let { return it }
+            connection?.close()
+            connection = null
 
-        val mac = savedDeviceMac()
-            ?: throw BmapException("No device selected")
-        val adapter = context.getSystemService(BluetoothManager::class.java).adapter
-            ?: throw BmapException("Bluetooth unavailable")
-        val device = adapter.getRemoteDevice(mac)
+            val mac = savedDeviceMac()
+                ?: throw BmapException("No device selected")
+            val adapter = context.getSystemService(BluetoothManager::class.java).adapter
+                ?: throw BmapException("Bluetooth unavailable")
+            val device = adapter.getRemoteDevice(mac)
 
-        _state.value = _state.value.copy(busy = true, lastError = null)
-        try {
-            val (transport, link) = openFirstWorkingTransport(device)
-            val conn = BmapConnection(transport)
-            connection = conn
-            unsolicitedJob?.cancel()
-            unsolicitedJob = scope.launch {
-                conn.unsolicited.collect { onUnsolicited(it) }
+            _state.value = _state.value.copy(busy = true, lastError = null)
+            try {
+                val (transport, link) = openFirstWorkingTransport(device, automatic)
+                val conn = BmapConnection(transport)
+                connection = conn
+                unsolicitedJob?.cancel()
+                unsolicitedJob = scope.launch {
+                    conn.unsolicited.collect { onUnsolicited(it) }
+                }
+                // Ask the device to push state changes; without this it stays silent
+                // and we have to poll. Format comes from the official app's
+                // NotificationByFblock [9.2].
+                notificationsActive = runCatching { conn.enableNotifications() }
+                    .onSuccess { Log.i(TAG, "Notifications enabled for blocks $it") }
+                    .onFailure { Log.w(TAG, "Notification subscribe failed", it) }
+                    .getOrDefault(emptyList())
+                    .isNotEmpty()
+                _state.value = _state.value.copy(connected = true, busy = false, link = link)
+                // Push is the mechanism; polling only covers firmware that refuses
+                // the subscription.
+                if (!notificationsActive) startPolling()
+                startLinkWatchdog()
+                conn
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    connected = false, busy = false, lastError = e.message
+                )
+                persistWidgetCache()
+                throw e
             }
-            // Ask the device to push state changes; without this it stays silent
-            // and we have to poll. Format comes from the official app's
-            // NotificationByFblock [9.2].
-            notificationsActive = runCatching { conn.enableNotifications() }
-                .onSuccess { Log.i(TAG, "Notifications enabled for blocks $it") }
-                .onFailure { Log.w(TAG, "Notification subscribe failed", it) }
-                .getOrDefault(emptyList())
-                .isNotEmpty()
-            _state.value = _state.value.copy(connected = true, busy = false, link = link)
-            // Push is the mechanism; polling only covers firmware that refuses
-            // the subscription.
-            if (!notificationsActive) startPolling()
-            conn
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(
-                connected = false, busy = false, lastError = e.message
-            )
-            persistWidgetCache()
-            throw e
         }
-    }
 
     fun disconnect() {
         stopPolling()
+        stopLinkWatchdog()
         unsolicitedJob?.cancel()
         unsolicitedJob = null
         connection?.close()
@@ -244,9 +267,58 @@ object DeviceRepository {
         if (state.value.connected) {
             refresh()
         } else if (isAclUp() || isNearby()) {
-            ensureConnected()
+            ensureConnected(automatic = true)
             refresh()
         }
+    }
+
+    /**
+     * A nearby sighting is only useful if something acts on it: connect over LE
+     * so state and the widget go live while the earbuds play to another device.
+     *
+     * Rate-limited because advertisements arrive every couple of seconds, and
+     * strictly [automatic] so it can never take the audio (see [linkOrder]).
+     */
+    private suspend fun autoConnectOnSighting() {
+        if (state.value.connected || state.value.busy) return
+        if (connection?.isConnected == true) return
+        if (savedDeviceMac() == null) return
+        // Nothing to try: the only permitted transport needs a link we don't have.
+        if (linkOrder(linkPreference(), isAclUp(), automatic = true).isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - lastAutoConnectAt < AUTO_CONNECT_RETRY_MS) return
+        lastAutoConnectAt = now
+        // Bounded: this runs while a broadcast receiver is held open.
+        withTimeoutOrNull(AUTO_CONNECT_BUDGET_MS) {
+            runCatching {
+                ensureConnected(automatic = true)
+                refresh()
+            }.onFailure { Log.d(TAG, "Auto-connect on sighting failed: ${it.message}") }
+        }
+    }
+
+    /**
+     * Nothing tells us when an LE link dies — there is no ACL broadcast for it,
+     * and with pushes working there are no requests to fail either. Without this
+     * the UI and the widget would keep claiming "connected" forever.
+     */
+    private fun startLinkWatchdog() {
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = scope.launch {
+            while (true) {
+                delay(LINK_WATCHDOG_MS)
+                if (connection?.isConnected == false) {
+                    Log.i(TAG, "Link went away; clearing state")
+                    disconnect()
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun stopLinkWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = null
     }
 
     /** Was a matching advertisement seen recently enough to bother connecting? */
@@ -291,6 +363,8 @@ object DeviceRepository {
                     lastSeenAt = System.currentTimeMillis(),
                     lastSeenAvailable = match.second.availableToConnect,
                 )
+                // The point of detecting them: go live without being asked.
+                autoConnectOnSighting()
             } finally {
                 onDone()
             }
@@ -298,9 +372,17 @@ object DeviceRepository {
     }
 
     /** Re-arm the system scan if the user turned nearby detection on. */
-    fun startPresenceScanIfEnabled() = runAsync {
-        if (context.dataStore.data.first()[Prefs.PRESENCE_ENABLED] == true) {
-            PresenceScanner.start(context)
+    fun startPresenceScanIfEnabled(onDone: () -> Unit = {}) {
+        scope.launch {
+            try {
+                if (context.dataStore.data.first()[Prefs.PRESENCE_ENABLED] == true) {
+                    PresenceScanner.start(context)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not re-arm the nearby scan", e)
+            } finally {
+                onDone()
+            }
         }
     }
 

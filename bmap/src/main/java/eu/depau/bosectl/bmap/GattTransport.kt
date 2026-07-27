@@ -51,13 +51,13 @@ private const val DRAIN_SILENCE_MS = 500L
  * everything with error 20 `InsecureTransport` on an unencrypted link, and the
  * classic bond supplies LE encryption via CTKD.
  *
- * `ponytail:` verified on hardware for GETs only — including replies larger than
- * one notification. Two paths are structurally identical to RFCOMM but have never
- * been exercised over LE, so if either misbehaves, look here first:
- *  - the `[9.2]` notification subscription and the pushes it turns on. Failure is
- *    graceful: `DeviceRepository` falls back to polling.
- *  - multi-frame drains (`GetAll`, and `[1.9]`'s frame per button), which rely on
- *    the same "collect until silence" rule.
+ * Verified on hardware: GETs, replies larger than one notification, multi-frame
+ * drains (`GetAll [31.1]` answering with eleven `[31.6]` frames), and the `[9.2]`
+ * subscription, which reports blocks `[1, 2, 4, 5, 31]` exactly as over RFCOMM.
+ *
+ * `ponytail:` a *delivered* push has not been observed over LE yet — subscribing
+ * works, but nothing changed on the device while it was watched. If live updates
+ * ever look stale over LE, suspect delivery rather than the subscription.
  */
 @SuppressLint("MissingPermission")  // caller holds BLUETOOTH_CONNECT
 class GattTransport private constructor(

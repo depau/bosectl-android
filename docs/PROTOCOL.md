@@ -743,6 +743,25 @@ adb logcat -d -s BmapProbe
 `mode ble` is read-only. Both log the whole GATT database, the granted MTU, every
 raw notification and the reassembled BMAP frames.
 
+### What the app does with it
+
+Verified on-device over LE, no classic link involved: the `[9.2]` subscription
+reports the same blocks as over RFCOMM (`[1, 2, 4, 5, 31]`), multi-frame drains
+work (`GetAll [31.1]` → eleven `[31.6]` frames), and a full `refresh()` — modes,
+battery, name, `[4.4]`, `[5.1]` — completes in about six seconds.
+
+Nearby detection needs **no Google Play and no foreground service**:
+`startScan(filters, settings, PendingIntent)` is serviced by the Bluetooth stack,
+which starts the app to deliver results. Filtered on Bose's company id
+(`0x009E`), `SCAN_MODE_LOW_POWER`. It survives process death but **not** a reboot,
+an app update or a Bluetooth off/on — those need re-arming
+(`PresenceBootReceiver`), or detection quietly stops working.
+
+The rule the code enforces: an *automatic* connect may never bring up a classic
+link, because RFCOMM to an idle device steals the audio (§14). Nearby sightings
+therefore connect over LE only; classic is reserved for an already-connected
+device or an explicit tap.
+
 `ponytail:` still untested — whether the firmware segments *notifications* down to
 20 bytes at an MTU of 23. **Neither side can force it:** BlueZ negotiates a large
 MTU with no override, and Android's stack ignored `requestMtu(23)` and granted

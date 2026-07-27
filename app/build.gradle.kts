@@ -64,4 +64,5 @@ dependencies {
     implementation(libs.androidx.glance.material3)
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation(libs.junit)
 }
