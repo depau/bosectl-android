@@ -53,7 +53,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import eu.depau.bosectl.bmap.ModeConfig
 import eu.depau.bosectl.bmap.PairedDevice
 import eu.depau.bosectl.bmap.Spatial
+import eu.depau.bosectl.data.BoseState
 import eu.depau.bosectl.data.DeviceRepository
+import eu.depau.bosectl.data.LinkLayer
 import eu.depau.bosectl.data.PRESENCE_FRESH_MS
 
 /** Device work runs on the repository scope: leaving the screen can't cancel it. */
@@ -98,6 +100,7 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = { LinkStatusIcon(state) },
                 title = { Text(state.deviceName ?: "Bose Control") },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
@@ -307,6 +310,28 @@ private fun HeaderRow(
             }
         }
     }
+}
+
+/**
+ * The same glyph the widget shows, with the same meaning — see `LinkStatusIcon`
+ * in `BoseWidget.kt` for the mapping.
+ */
+@Composable
+private fun LinkStatusIcon(state: BoseState) {
+    val (icon, description) = when {
+        !state.connected -> AppIcons.BluetoothDisabled to "Disconnected"
+        state.playingHere -> AppIcons.MediaBluetoothOn to "Playing on this phone"
+        state.link == LinkLayer.LE -> AppIcons.BluetoothSearching to
+            "Connected over Bluetooth LE"
+        else -> AppIcons.BluetoothConnected to "Connected over Bluetooth"
+    }
+    Icon(
+        icon,
+        contentDescription = description,
+        modifier = Modifier.padding(start = 12.dp),
+        tint = if (state.connected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**
