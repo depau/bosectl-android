@@ -65,9 +65,11 @@ true)` enforces that for every connect the user did not explicitly ask for.
 The pairing is asymmetric on purpose: LE reaches the earbuds when they are
 playing to someone else, but the firmware hangs up an idle LE link after ~40 s,
 so it needs a keepalive. Classic needs none — the audio connection holds it up.
-So `upgradeToClassicIfAvailable()` moves an LE connection over as soon as a
-classic link exists (this phone started holding the audio), and presence-driven
-LE connects cover the rest.
+There is deliberately **no automatic LE-to-classic switch**: an early version
+had one, and its secure RFCOMM connect right at ACL-up — before the earbuds'
+own profiles had authenticated — drove an auth-failure/reconnect chime loop
+that ended in the phone losing the bond. A connection stays on whatever link it
+opened with until it drops or the user explicitly reconnects.
 
 Presentation stays out of `:bmap`, and `:app` never hand-builds packets.
 
