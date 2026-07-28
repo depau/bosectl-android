@@ -55,6 +55,14 @@ private const val AUTO_CONNECT_RETRY_MS = 60_000L
 /** A broadcast receiver is held open across this, so keep it short. */
 private const val AUTO_CONNECT_BUDGET_MS = 8_000L
 
+/**
+ * After a failed connect, automatic triggers (ACL up, sightings, screens) must
+ * not pile up retries: with a broken bond each secure RFCOMM attempt forced a
+ * classic auth failure that tore the ACL down, and retrying on every resulting
+ * ACL_CONNECTED broadcast became a chime storm (see CLAUDE.md).
+ */
+private const val CONNECT_FAILURE_COOLDOWN_MS = 60_000L
+
 /** How often to notice that an LE link died. Costs no radio traffic. */
 private const val LINK_WATCHDOG_MS = 15_000L
 
@@ -137,6 +145,9 @@ object DeviceRepository {
 
     @Volatile
     private var lastAutoConnectAt = 0L
+
+    @Volatile
+    private var lastConnectFailedAt = 0L
     private var visibleScreens = 0
     private var notificationsActive = false
 
@@ -178,7 +189,8 @@ object DeviceRepository {
         device: BluetoothDevice,
         automatic: Boolean,
     ): Pair<BmapTransport, LinkLayer> {
-        val order = linkOrder(linkPreference(), classicLinkUp = isAclUp(), automatic = automatic)
+        val order =
+            linkOrder(linkPreference(), classicLinkUp = classicUsable(automatic), automatic)
         var lastError: Exception? = null
         for (link in order) {
             try {
@@ -202,6 +214,14 @@ object DeviceRepository {
     suspend fun ensureConnected(automatic: Boolean = false): BmapConnection =
         connectMutex.withLock {
             connection?.takeIf { it.isConnected }?.let { return it }
+            // Automatic triggers arrive in bursts (every ACL flap, every
+            // advertisement); once a connect has failed, let the dust settle
+            // instead of feeding the flap that caused the failure.
+            if (automatic &&
+                System.currentTimeMillis() - lastConnectFailedAt < CONNECT_FAILURE_COOLDOWN_MS
+            ) {
+                throw BmapException("Connect failed recently; backing off")
+            }
             connection?.close()
             connection = null
 
@@ -234,8 +254,10 @@ object DeviceRepository {
                 if (!notificationsActive) startPolling()
                 startLinkWatchdog()
                 startKeepalive(link)
+                lastConnectFailedAt = 0L
                 conn
             } catch (e: Exception) {
+                lastConnectFailedAt = System.currentTimeMillis()
                 _state.value = _state.value.copy(
                     connected = false, busy = false, lastError = e.message
                 )
@@ -266,9 +288,13 @@ object DeviceRepository {
         }
     }
 
-    /** Explicit connect (ACL receiver, device picker, Connect button). */
-    fun onDeviceAppeared() = runAsync {
-        ensureConnected()
+    /**
+     * Connect because the device showed up or the user asked. [automatic] must
+     * be true for the ACL-receiver path — nobody tapped anything there, so it
+     * gets neither classic initiation nor a bypass of the failure cooldown.
+     */
+    fun onDeviceAppeared(automatic: Boolean = false) = runAsync {
+        ensureConnected(automatic)
         refresh()
     }
 
@@ -304,7 +330,9 @@ object DeviceRepository {
         if (connection?.isConnected == true) return
         if (savedDeviceMac() == null) return
         // Nothing to try: the only permitted transport needs a link we don't have.
-        if (linkOrder(linkPreference(), isAclUp(), automatic = true).isEmpty()) return
+        if (linkOrder(linkPreference(), classicUsable(automatic = true), automatic = true)
+                .isEmpty()
+        ) return
         val now = System.currentTimeMillis()
         if (now - lastAutoConnectAt < AUTO_CONNECT_RETRY_MS) return
         lastAutoConnectAt = now
@@ -441,6 +469,27 @@ object DeviceRepository {
             lastSeenAt = prefs[Prefs.LAST_SEEN_AT],
             lastSeenAvailable = prefs[Prefs.LAST_SEEN_AVAILABLE] ?: false,
         )
+    }
+
+    /**
+     * May this connect reach for RFCOMM? The classic link must be up, and an
+     * [automatic] connect must additionally never be the thing that triggers
+     * classic authentication or pairing — a secure RFCOMM connect before the
+     * system authenticated the link is exactly what fed the chime/unpair storm
+     * (see CLAUDE.md). Bonded + A2DP connected means auth already happened.
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun classicUsable(automatic: Boolean): Boolean {
+        if (!isAclUp()) return false
+        if (!automatic) return true
+        val mac = savedDeviceMac() ?: return false
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+            ?: return false
+        if (adapter.getRemoteDevice(mac).bondState != BluetoothDevice.BOND_BONDED) return false
+        // ponytail: adapter-wide A2DP state, not per-device — there is one saved
+        // device in practice. Go per-device via getProfileProxy if that changes.
+        return adapter.getProfileConnectionState(BluetoothProfile.A2DP) ==
+                BluetoothProfile.STATE_CONNECTED
     }
 
     @SuppressLint("MissingPermission")

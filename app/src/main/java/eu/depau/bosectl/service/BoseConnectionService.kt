@@ -44,7 +44,8 @@ class BoseConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification(null))
-        DeviceRepository.onDeviceAppeared()
+        // The ACL receiver started us — not a user action, so automatic.
+        DeviceRepository.onDeviceAppeared(automatic = true)
         watchJob?.cancel()
         watchJob = scope.launch {
             DeviceRepository.state.collectLatest { state ->
