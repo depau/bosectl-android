@@ -1,14 +1,18 @@
 package eu.depau.bosectl.widget
 
 import android.content.Context
+import android.os.Build
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
@@ -21,6 +25,7 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.Switch
@@ -45,11 +50,13 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import eu.depau.bosectl.R
+import eu.depau.bosectl.bmap.Prompt
 import eu.depau.bosectl.data.CachedMode
 import eu.depau.bosectl.data.Prefs
 import eu.depau.bosectl.data.dataStore
 import eu.depau.bosectl.data.LinkLayer
 import eu.depau.bosectl.data.decodeCachedModes
+import eu.depau.bosectl.data.encodeCachedModes
 import eu.depau.bosectl.ui.MainActivity
 import eu.depau.bosectl.ui.promptDrawable
 import kotlinx.coroutines.flow.first
@@ -61,6 +68,45 @@ private data class Battery(
 
 class BoseWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = BoseWidget()
+}
+
+/** Roughly the declared 4x2 target, so the preview shows the mode-button layout. */
+private val PREVIEW_SIZE = DpSize(250.dp, 200.dp)
+
+/** Stand-in for the picker preview until there is real cached state to show. */
+private val PREVIEW_PREFS = mutablePreferencesOf(
+    Prefs.CACHE_DEVICE_NAME to "QC Ultra Earbuds",
+    Prefs.CACHE_CONNECTED to true,
+    Prefs.CACHE_LINK to LinkLayer.CLASSIC.id,
+    Prefs.CACHE_PLAYING_HERE to true,
+    Prefs.CACHE_BAT_LEFT to 80,
+    Prefs.CACHE_BAT_RIGHT to 75,
+    Prefs.CACHE_BAT_CASE to 70,
+    Prefs.CACHE_CURRENT_MODE to 0,
+    Prefs.CACHE_SPATIAL to 0,
+    Prefs.CACHE_ANC to true,
+    Prefs.CACHE_CNC to 0,
+    Prefs.CACHE_TOUCH to true,
+    Prefs.CACHE_STARRED to encodeCachedModes(
+        listOf(
+            CachedMode(0, Prompt.QUIET.id, "Quiet"),
+            CachedMode(1, Prompt.AWARE.id, "Aware"),
+            CachedMode(2, Prompt.IMMERSION.id, "Immersion"),
+        )
+    ),
+)
+
+/**
+ * Render the widget and hand it to the launcher as a generated preview (API 35+).
+ *
+ * The platform rate-limits this to ~2 calls an hour and a refusal simply leaves
+ * the previous preview in place, so publish on every launch and let it throttle:
+ * that keeps the cached state in the preview as fresh as the API allows.
+ */
+suspend fun publishWidgetPreview(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+    val result = GlanceAppWidgetManager(context).setWidgetPreviews(BoseWidgetReceiver::class)
+    Log.d("BoseWidget", "setWidgetPreviews -> $result")
 }
 
 // Section heights. Breakpoints are DERIVED from these rather than guessed from
@@ -122,6 +168,21 @@ class BoseWidget : GlanceAppWidget() {
             val prefs by context.dataStore.data.collectAsState(initial)
             GlanceTheme { WidgetContent(prefs) }
         }
+    }
+
+    // The picker preview is the real widget, rendered by [publishWidgetPreview].
+    // API 31-34 get the static previewLayout instead.
+    override val previewSizeMode = SizeMode.Responsive(setOf(PREVIEW_SIZE))
+
+    override suspend fun providePreview(context: Context, widgetCategory: Int) {
+        // Real cached state when there is some, so the preview shows the modes
+        // and battery the widget would actually display. Before the first
+        // connection there is nothing to show, and the live widget's "open the
+        // app to load your modes" makes a poor advert — hence the sample.
+        val cached = runCatching { context.dataStore.data.first() }.getOrNull()
+        val prefs = cached?.takeIf { decodeCachedModes(it[Prefs.CACHE_STARRED]).isNotEmpty() }
+            ?: PREVIEW_PREFS
+        provideContent { GlanceTheme { WidgetContent(prefs) } }
     }
 
     @Composable

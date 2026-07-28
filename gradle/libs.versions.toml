@@ -6,7 +6,10 @@ lifecycle = "2.9.1"
 activityCompose = "1.10.1"
 composeBom = "2025.06.01"
 datastore = "1.1.7"
-glance = "1.1.1"
+# 1.2.0 (still rc) is the first release with GlanceAppWidget.providePreview, i.e.
+# generated widget previews on API 35+. 1.1.1 has no way to render the real
+# widget into the picker.
+glance = "1.2.0-rc01"
 kotlinxCoroutines = "1.10.2"
 junit = "4.13.2"
 

@@ -76,3 +76,8 @@ fabric.properties
 
 # Kotlinc
 .kotlin/
+
+# Python
+*.pyc
+*.pyo
+__pycache__/

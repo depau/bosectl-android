@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Preview-only shapes: tinted from the layout so one drawable serves every
+     container. The widget itself gets its corners from Glance. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="24dp" />
+    <solid android:color="@android:color/white" />
+</shape>

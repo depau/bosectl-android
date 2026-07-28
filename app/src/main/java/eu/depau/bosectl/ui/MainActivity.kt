@@ -28,17 +28,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import eu.depau.bosectl.data.DeviceRepository
 import eu.depau.bosectl.data.Prefs
 import eu.depau.bosectl.data.dataStore
 import eu.depau.bosectl.ui.theme.BoseControlTheme
+import eu.depau.bosectl.widget.publishWidgetPreview
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /** Base for all screens: theme + edge-to-edge + repository init. */
 abstract class BoseActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DeviceRepository.init(this)
+        // App launch is the only moment the widget picker can be prepared before
+        // the user opens it.
+        lifecycleScope.launch { publishWidgetPreview(this@BoseActivity) }
         enableEdgeToEdge()
         setContent {
             BoseControlTheme {
